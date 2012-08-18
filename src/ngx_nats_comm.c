@@ -156,10 +156,7 @@ ngx_nats_buf_ensure(ngx_nats_buf_t *buf, size_t size, ngx_int_t compact)
 
 
 /*
- * Copied from ngx_http_upstream.c and only changed the log
- * strings. Not sure why it is not generalized in Nginx.
- * TODO: should I log if connection to NATS failed? I think I do
- * but perhaps not every time?
+ * Copied from ngx_http_upstream.c.
  */
 static ngx_int_t
 ngx_nats_test_connect(ngx_connection_t *c)
@@ -340,7 +337,7 @@ ngx_nats_flush(ngx_nats_connection_t *nc)
 
         /* Will need to try send later */
 
-        ngx_add_timer(c->write, 2000);      /* TODO: configurable? */
+        ngx_add_timer(c->write, 2000);      /* TODO: configurable */
 
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
             ngx_nats_close_connection(nc, NGX_NATS_REASON_INTERNAL_ERROR, 1);
@@ -566,7 +563,7 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                 return NGX_ERROR;
             }
 
-            /* TODO: how should I handle it? */
+            /* TODO: handle it */
         }
         else if (msg.type == NGX_NATS_MSG_PING) {
 

@@ -17,14 +17,14 @@
 /*
  * Major TODOs:
  *     - implement publish/subscribe interface.
- *     - process exit (shotdown NATS connection).
+ *     - process exit (shutdown NATS connection).
  *     - user/password per server.
  *
  * TODOs:
  *     - custom log.
  *     - ssl to NATS (?).
  *     - improve buffers.
- *     - use has in JSON objects.
+ *     - use hash in JSON objects.
  */
 
 /*---------------------------------------------------------------------------
@@ -411,8 +411,6 @@ ngx_nats_core_process_init(ngx_cycle_t *cycle)
      * or similar, NOT if could not connect to NATS, it'll retry.
      */
     rc = ngx_nats_init(nccf);
-
-    /* TODO: log error myself here? */
 
     return rc;
 }
