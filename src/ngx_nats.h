@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera, Inc.
+ * Copyright (C) Apcera Inc.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -30,6 +30,8 @@
 #define NGX_NATS_DEFAULT_PING       20000           /* milliseconds */
 
 #define NGX_NATS_DEFAULT_USER               "continuum.router"
+
+#define NGX_NATS_MAS_USER_PASS_LEN  (512)
 
 
 /*
@@ -90,6 +92,36 @@ typedef struct {
  * Implemented in ngx_nats_comm.c.
  */
 ngx_int_t ngx_nats_init(ngx_nats_core_conf_t * nccf);
+void ngx_nats_exit(ngx_nats_core_conf_t * nccf);
+
+
+/*
+ * Public client interface.
+ */
+
+typedef struct ngx_nats_client_s ngx_nats_client_t;
+
+typedef void (*ngx_nats_connected_pt)(ngx_nats_client_t *client);
+typedef void (*ngx_nats_disconnected_pt)(ngx_nats_client_t *client);
+typedef void (*ngx_nats_handle_msg_pt)(ngx_nats_client_t *client,
+                    ngx_int_t sid, 
+                    ngx_str_t *replyto, u_char *data, ngx_uint_t len);
+
+struct ngx_nats_client_s {
+
+    ngx_nats_connected_pt       connected;
+    ngx_nats_disconnected_pt    disconnected;
+
+    void                       *data;
+
+};
+
+ngx_int_t ngx_nats_add_client(ngx_nats_client_t *client);
+ngx_int_t ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
+                ngx_str_t *replyto, u_char *data, ngx_uint_t len);
+ngx_int_t ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
+                ngx_nats_handle_msg_pt handle_msg);
+ngx_int_t ngx_nats_create_inbox(u_char *buf, size_t bufsize);
 
 
 #endif /* _NGX_NATS_H_INCLUDED_ */

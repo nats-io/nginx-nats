@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera, Inc.
+ * Copyright (C) Apcera Inc.
  *
  */
 
@@ -72,7 +72,7 @@ typedef struct {
 
 /* 
  * If returns < 0 then it's an error code.
- * If returns > 0 then parsing was successfull and return value is the number
+ * If returns > 0 then parsing was successful and return value is the number
  * of parsed bytes, which may be less than the value of "len" param.
  * We do not allow empty JSON string. Notice this never returns 0 value.
  * This may parse an object, array or a primitive value. The caller

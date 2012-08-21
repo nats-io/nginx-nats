@@ -1,3 +1,4 @@
+CORE_INCS="$CORE_INCS $ngx_addon_dir"
 ngx_addon_name=ngx_nats_module
 HTTP_MODULES="$HTTP_MODULES ngx_nats_module ngx_nats_core_module"
 NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats.c"

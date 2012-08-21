@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera, Inc.
+ * Copyright (C) Apcera Inc.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -78,13 +78,37 @@ typedef struct {
 } ngx_nats_connection_t;
 
 
+typedef struct {
+
+    ngx_nats_client_t          *client;
+    ngx_nats_handle_msg_pt      handle_msg;
+    ngx_int_t                   sid;
+
+} ngx_nats_subscription_t;
+
+
+typedef struct {
+
+    ngx_array_t         clients;        /* ngx_nats_client_t*           */
+
+    /*
+     * TODO: use ngx_hash? array more economical if just a few
+     * non-deletable subscriptions.
+     */
+    ngx_array_t         subs;           /* ngx_nats_subscription_t*     */
+
+} ngx_nats_client_data_t;
+
+
 struct ngx_nats_data_s {
 
     ngx_nats_core_conf_t   *nccf;
     ngx_log_t              *log;
 
     ngx_event_t             reconnect_timer;
-    ngx_int_t               nconnects;      /* unsuccessfull connects       */
+    ngx_int_t               nconnects;      /* unsuccessful connects        */
+
+    ngx_nats_client_data_t  cd;
 
     ngx_nats_connection_t  *nc;             /* currently one only           */
     ngx_pool_t             *nc_pool;        /* resettable                   */
@@ -101,7 +125,8 @@ struct ngx_nats_data_s {
 /*
  * The entire buf story needs improvement, especially write buffers.
  * Current impl will do for low rate of sends to NATS. If NATS is used
- * to process HTTP requests then this has to change, but no plans for now.
+ * to process HTTP requests or in similar high-performance fashion
+ * then this has to change, but no plans for now.
  */
 ngx_nats_buf_t * ngx_nats_buf_create(ngx_pool_t *pool, size_t size);
 void ngx_nats_buf_free_buf(ngx_nats_buf_t *buf);

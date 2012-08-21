@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera, Inc.
+ * Copyright (C) Apcera Inc.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -8,6 +8,7 @@
 
 #include "ngx_nats.h"
 #include "ngx_nats_comm.h"
+
 
 /*
  * This file deals with the modules, setup, configuration parsing etc.
@@ -27,6 +28,7 @@
  *     - use hash in JSON objects.
  */
 
+
 /*---------------------------------------------------------------------------
  * Forward declarations of functions for main (root) module.
  *--------------------------------------------------------------------------*/
@@ -41,8 +43,9 @@ static char * ngx_nats_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
 static void * ngx_nats_core_create_conf(ngx_cycle_t *cycle);
 static char * ngx_nats_core_init_conf(ngx_conf_t *cf, void *conf);
 
-static ngx_int_t ngx_nats_core_module_init(ngx_cycle_t *cycle);
-static ngx_int_t ngx_nats_core_process_init(ngx_cycle_t *cycle);
+static ngx_int_t ngx_nats_core_init_module(ngx_cycle_t *cycle);
+static ngx_int_t ngx_nats_core_init_process(ngx_cycle_t *cycle);
+static void ngx_nats_core_exit_process(ngx_cycle_t *cycle);
 
 /*
  * Parse "server host:port" line inside the nats{...} block.
@@ -155,11 +158,11 @@ ngx_module_t  ngx_nats_core_module = {
     ngx_nats_core_commands,                 /* module directives */
     NGX_NATS_MODULE,                        /* module type */
     NULL,                                   /* init master */
-    ngx_nats_core_module_init,              /* init module */
-    ngx_nats_core_process_init,             /* init process */
+    ngx_nats_core_init_module,              /* init module */
+    ngx_nats_core_init_process,             /* init process */
     NULL,                                   /* init thread */
     NULL,                                   /* exit thread */
-    NULL,                                   /* exit process */
+    ngx_nats_core_exit_process,             /* exit process */
     NULL,                                   /* exit master */
     NGX_MODULE_V1_PADDING
 };
@@ -305,6 +308,7 @@ ngx_nats_core_create_conf(ngx_cycle_t *cycle)
     return nccf;
 }
 
+
 static void
 ngx_nats_conf_init_str(ngx_str_t *s, char *value)
 {
@@ -327,7 +331,7 @@ ngx_nats_core_init_conf(ngx_conf_t *cf, void *conf)
     ngx_nats_conf_init_str(&nccf->user, NGX_NATS_DEFAULT_USER);
     ngx_nats_conf_init_str(&nccf->password, "");
 
-    if (nccf->user.len+nccf->password.len > 900) {
+    if (nccf->user.len+nccf->password.len > NGX_NATS_MAS_USER_PASS_LEN) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
             "NATS: user name and password are too long");
         return NGX_CONF_ERROR;
@@ -337,11 +341,12 @@ ngx_nats_core_init_conf(ngx_conf_t *cf, void *conf)
 }
 
 static ngx_int_t
-ngx_nats_core_module_init(ngx_cycle_t *cycle)
+ngx_nats_core_init_module(ngx_cycle_t *cycle)
 {
     ngx_nats_core_conf_t   *nccf;
     ngx_nats_data_t        *nd;
     ngx_log_t              *log;
+    ngx_int_t               rc;
 
     if (ngx_nats_present == 0) {
         /*
@@ -382,6 +387,18 @@ ngx_nats_core_module_init(ngx_cycle_t *cycle)
         return NGX_ERROR;
     }
 
+    rc = ngx_array_init(&nd->cd.clients, nccf->pool, 4, 
+                                sizeof(ngx_nats_client_t *));
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    rc = ngx_array_init(&nd->cd.subs, nccf->pool, 8, 
+                                sizeof(ngx_nats_subscription_t*));
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
     nccf->data      = nd;
     nd->nccf        = nccf;
     nd->log         = nccf->log;        /* use diff log here ? */
@@ -393,7 +410,7 @@ ngx_nats_core_module_init(ngx_cycle_t *cycle)
 }
 
 static ngx_int_t
-ngx_nats_core_process_init(ngx_cycle_t *cycle)
+ngx_nats_core_init_process(ngx_cycle_t *cycle)
 {
     ngx_nats_core_conf_t   *nccf;
     ngx_int_t               rc;
@@ -407,12 +424,26 @@ ngx_nats_core_process_init(ngx_cycle_t *cycle)
     nccf->log = cycle->log;
 
     /*
-     * Returns error in case of some hard core failure like no memory
-     * or similar, NOT if could not connect to NATS, it'll retry.
+     * Returns error in case of some hard failure like no memory
+     * or similar, not if could not connect to NATS, it'll retry.
      */
     rc = ngx_nats_init(nccf);
 
     return rc;
+}
+
+static void
+ngx_nats_core_exit_process(ngx_cycle_t *cycle)
+{
+    ngx_nats_core_conf_t   *nccf;
+
+    if (ngx_nats_present == 0) {
+        return;
+    }
+
+    nccf = (ngx_nats_core_conf_t*) ngx_nats_get_core_conf(cycle->conf_ctx);
+
+    ngx_nats_exit(nccf);
 }
 
 /*

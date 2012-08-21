@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera, Inc.
+ * Copyright (C) Apcera Inc.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -16,7 +16,7 @@
  */
 
 /*---------------------------------------------------------------------------
- * Forward declarations of functions.
+ * Forward declarations.
  *--------------------------------------------------------------------------*/
 
 static void ngx_nats_connect(ngx_nats_data_t *nd);
@@ -33,6 +33,8 @@ static void ngx_nats_free_peer(ngx_peer_connection_t *pc,
                     void *data, ngx_uint_t state);
 
 static ngx_int_t ngx_nats_conn_err_reported = 0;
+
+ngx_nats_data_t *ngx_nats_data = NULL;
 
 /*---------------------------------------------------------------------------
  * Implementations.
@@ -201,8 +203,10 @@ static void
 ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
                 ngx_int_t reconnect)
 {
-    ngx_connection_t    *c  = nc->pc.connection;
-    ngx_nats_data_t     *nd = nc->nd;
+    ngx_connection_t   *c  = nc->pc.connection;
+    ngx_nats_data_t    *nd = nc->nd;
+    ngx_nats_client_t **pclient;
+    ngx_int_t           i, n;
     
     if (nc->ping_timer.timer_set) {
         ngx_del_timer(&nc->ping_timer);
@@ -225,13 +229,31 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
         ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
             "cannot connect to NATS at '%s'",
             nc->server->url.data);
-    }
-    else {
+
+    } else if (nc->state == NGX_NATS_STATE_READY) {
 
         ngx_log_error(NGX_LOG_WARN, nc->nd->log, 0,
             "disconnected from NATS at '%s'",
             nc->server->url.data);
+
+        /* Call disconnected in clients */
+
+        n       = nd->cd.clients.nelts;
+        pclient = nd->cd.clients.elts;
+
+        for (i = 0; i < n; i++, pclient++) {
+            if ((*pclient)->disconnected) {
+                (*pclient)->disconnected(*pclient);
+            }
+        }
+
+    } else {
+
+        /* TODO: handle partial connect */
+
     }
+
+    nd->cd.subs.nelts = 0;      /* remove all subscriptions */
 
     nd->nc = NULL;
 
@@ -267,7 +289,7 @@ ngx_nats_check_connected(ngx_nats_connection_t *nc)
     /*
      * Notice this only means we have successfully sent to or
      * received some bytes from NATS. This does not yet mean
-     * we had successfull handshake.
+     * we had successful handshake.
      */
 
     nc->state |= NGX_NATS_STATE_BYTES_EXCHANGED;
@@ -278,7 +300,7 @@ ngx_nats_check_connected(ngx_nats_connection_t *nc)
         nc->ping_timer.log     = nc->nd->log;
         nc->ping_timer.data    = nc;
 
-        ngx_add_timer(&nc->ping_timer, 3000);
+        ngx_add_timer(&nc->ping_timer, nc->nd->nccf->ping_interval);
     }
 
     ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
@@ -337,7 +359,7 @@ ngx_nats_flush(ngx_nats_connection_t *nc)
 
         /* Will need to try send later */
 
-        ngx_add_timer(c->write, 2000);      /* TODO: configurable */
+        ngx_add_timer(c->write, 5000);      /* TODO: configurable */
 
         if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
             ngx_nats_close_connection(nc, NGX_NATS_REASON_INTERNAL_ERROR, 1);
@@ -377,8 +399,10 @@ ngx_nats_add_message(ngx_nats_connection_t *nc, char *message, size_t size)
 static ngx_int_t
 ngx_nats_connection_ready(ngx_nats_connection_t *nc)
 {
-    ngx_log_t  *log = nc->nd->log;
-    ngx_int_t   n;
+    ngx_nats_data_t    *nd = nc->nd;
+    ngx_log_t          *log = nd->log;
+    ngx_nats_client_t **pclient;
+    ngx_int_t           i, n;
 
     ngx_nats_conn_err_reported = 0;
 
@@ -387,13 +411,22 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
     n = log->log_level;
     log->log_level = NGX_LOG_INFO;
 
-    ngx_log_error(NGX_LOG_INFO, nc->nd->log, 0,
+    ngx_log_error(NGX_LOG_INFO, nd->log, 0,
         "connected to NATS at '%s': version=%s id=%s",
         nc->server->url.data, 
         nc->srv_version->data,
         nc->srv_id->data);
 
     log->log_level = n;     /* restore log level */
+
+    /* Call connected in clients */
+
+    n       = nd->cd.clients.nelts;
+    pclient = nd->cd.clients.elts;
+
+    for (i = 0; i < n; i++, pclient++) {
+        (*pclient)->connected(*pclient);
+    }
 
     return NGX_OK;
 }
@@ -479,6 +512,38 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, char *bytes,
     return NGX_OK;
 }
 
+static void
+ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
+                ngx_nats_msg_t *msg)
+{
+    ngx_int_t                   n, sid;
+    ngx_nats_subscription_t   **psub;
+    ngx_nats_subscription_t    *sub;
+    ngx_str_t                  *r = NULL;
+
+    sid  = msg->sid;
+    n    = nc->nd->cd.subs.nelts;
+    psub = nc->nd->cd.subs.elts;
+
+    /* could receive rogue message? */
+    if (sid < 0 || sid >= n) {
+        return;
+    }
+
+    sub = psub[sid];
+    if (sub == NULL) {
+        return;
+    }
+
+    if (msg->replyto.len > 0) {
+        r = &msg->replyto;
+    }
+
+    sub->handle_msg(sub->client, sid, r, 
+                (u_char *) (buf + msg->bstart),
+                (ngx_uint_t) (msg->bend - msg->bstart));
+}
+
 
 static ngx_int_t
 ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
@@ -486,6 +551,7 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
     ngx_int_t       rc, skip;
     ngx_nats_msg_t  msg;
     u_char         *bytes;
+    char           *ce;
 
     for ( ;; ) {
 
@@ -531,31 +597,33 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 
         if (msg.type == NGX_NATS_MSG_OK) {
 
-            if ((nc->state & NGX_NATS_STATE_CONNECT_OKAYED) == 0) {
-                nc->state |= NGX_NATS_STATE_CONNECT_OKAYED;
+            /* ignore all OKs */
 
-                nc->state = NGX_NATS_STATE_READY;
-                ngx_nats_connection_ready(nc);
-
-            }
         }
         else if (msg.type == NGX_NATS_MSG_ERR) {
 
+            ce = "";
+            
             if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
                 !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
+                ce = " connect";
+            }
 
-                if (msg.bstart < msg.bend) {
-                    ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                        "NATS at '%s' "
-                        "returned connect error: %s",
-                        nc->server->url.data, bytes+msg.bstart);
-                }
-                else {
-                    ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                        "NATS at '%s' "
-                        "returned connect error with no message",
-                        nc->server->url.data);
-                }
+            if (msg.bstart < msg.bend) {
+                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                    "NATS at '%s' "
+                    "returned&s error: %s",
+                    ce, nc->server->url.data, bytes+msg.bstart);
+            }
+            else {
+                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                    "NATS at '%s' "
+                    "returned&s error with no message",
+                    ce, nc->server->url.data);
+            }
+
+            if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
+                !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
 
                 ngx_nats_close_connection(nc,
                             NGX_NATS_REASON_CONNECT_REFUSED, 1);
@@ -563,7 +631,8 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                 return NGX_ERROR;
             }
 
-            /* TODO: handle it */
+            /* TODO: what am I supposed to do about it? */
+
         }
         else if (msg.type == NGX_NATS_MSG_PING) {
 
@@ -572,8 +641,15 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         }
         else if (msg.type == NGX_NATS_MSG_PONG) {
 
-            /* just ignore */
+            if ((nc->state & NGX_NATS_STATE_CONNECT_OKAYED) == 0) {
+                nc->state |= NGX_NATS_STATE_CONNECT_OKAYED;
 
+                nc->state = NGX_NATS_STATE_READY;
+
+                ngx_nats_connection_ready(nc);
+            }
+            
+            /* otherwise just ignore */
         }
         else if (msg.type == NGX_NATS_MSG_INFO) {
 
@@ -603,7 +679,7 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         }
         else if (msg.type == NGX_NATS_MSG_MSG) {
 
-            /* TODO: call user of this message */
+            ngx_nats_process_msg(nc, buf, &msg);
 
         } else {
 
@@ -788,12 +864,13 @@ ngx_nats_free_peer(ngx_peer_connection_t *pc, void *data, ngx_uint_t state)
 static void
 ngx_nats_connection_init(ngx_nats_connection_t *nc)
 {
-    u_char  connstr[1024];
+    /* 128 is more than hardcoded string below. Increase when need. */
+    u_char  connstr[NGX_NATS_MAS_USER_PASS_LEN + 128];
     u_char *p;
 
     p = ngx_sprintf(connstr,
             "CONNECT {\"verbose\":false,\"pedantic\":false,"
-            "\"user\":\"%V\",\"pass\":\"%V\"}\r\n",
+            "\"user\":\"%V\",\"pass\":\"%V\"}\r\nPING\r\n",
             &nc->nd->nccf->user, &nc->nd->nccf->password);
 
     if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) == 0) {
@@ -804,7 +881,6 @@ ngx_nats_connection_init(ngx_nats_connection_t *nc)
 
         return;
     }
-
 }
 
 
@@ -914,7 +990,7 @@ ngx_nats_connect_loop(ngx_nats_data_t *nd)
     }
 
     if (rc == NGX_AGAIN) {
-        ngx_add_timer(c->write, 2000);  /* TODO: configurable? */
+        ngx_add_timer(c->write, 5000);  /* TODO: configurable? */
         return NGX_OK;
     }
 
@@ -957,6 +1033,8 @@ ngx_nats_init(ngx_nats_core_conf_t *nccf)
     ngx_nats_data_t  *nd;
 
     nd = (ngx_nats_data_t *) nccf->data;
+
+    ngx_nats_data = nd;
     
     nd->log = nccf->log;
 
@@ -968,5 +1046,197 @@ ngx_nats_init(ngx_nats_core_conf_t *nccf)
 
     return NGX_OK;
 }
+
+void
+ngx_nats_exit(ngx_nats_core_conf_t *nccf)
+{
+    ngx_nats_data = NULL;
+}
+
+/*---------------------------------------------------------------------------
+ * Client functions.
+ *--------------------------------------------------------------------------*/
+
+ngx_int_t
+ngx_nats_add_client(ngx_nats_client_t *client)
+{
+    ngx_nats_data_t            *nd = ngx_nats_data;
+    ngx_nats_client_data_t     *cd;
+    ngx_nats_client_t         **c;
+
+    if (nd == NULL) {
+        return NGX_ABORT;   /* nats not defined in the config */
+    }
+
+    cd = &nd->cd;
+
+    c = ngx_array_push(&cd->clients);
+    if (c == NULL) {
+        return NGX_ERROR;
+    }
+
+    *c = client;
+
+    if (nd->nc == NULL) {
+        return NGX_OK;
+    }
+
+    if (nd->nc->state != NGX_NATS_STATE_READY) {
+        return NGX_OK;
+    }
+
+    client->connected(client);
+
+    return NGX_OK;
+}
+
+
+ngx_int_t
+ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
+            ngx_str_t *replyto, u_char *data, ngx_uint_t len)
+{
+    ngx_nats_data_t        *nd = ngx_nats_data;
+    ngx_nats_connection_t  *nc;
+    u_char                  header[512+64];   /* TODO: !! */
+    u_char                 *p;
+    ngx_int_t               rc;
+
+    if (nd == NULL) {
+        return NGX_ABORT;   /* nats not defined in the config */
+    }
+
+    if (nd->nc == NULL) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    nc = nd->nc;
+
+    if (nc->state != NGX_NATS_STATE_READY) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    if (replyto != NULL) {
+        if (subject->len + replyto->len > 512) {
+            return NGX_DECLINED;
+        }
+        p = ngx_sprintf(header,
+                "PUB %s %s %ui\r\n",
+                subject->data, replyto->data, len);
+    } else {
+        if (subject->len > 512) {
+            return NGX_DECLINED;
+        }
+        p = ngx_sprintf(header,
+                "PUB %s %ui\r\n",
+                subject->data, len);
+    }
+
+    rc = ngx_nats_add_message(nc, (char*)header, (p - header));
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    rc = ngx_nats_add_message(nc, (char *)data, (size_t)len);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    rc = ngx_nats_add_message(nc, "\r\n", 2);
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    ngx_nats_flush(nd->nc);
+
+    return NGX_OK;
+}
+
+
+ngx_int_t
+ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
+                ngx_nats_handle_msg_pt handle_msg)
+{
+    ngx_nats_data_t            *nd = ngx_nats_data;
+    ngx_nats_connection_t      *nc;
+    ngx_nats_client_data_t     *cd;
+    ngx_nats_subscription_t    *sub;
+    ngx_nats_subscription_t   **psub;
+    u_char                      header[512+64];   /* TODO: !! */
+    u_char                     *p;
+    ngx_int_t                   sid, rc;
+
+    if (nd == NULL) {
+        return NGX_ABORT;   /* nats not defined in the config */
+    }
+
+    if (nd->nc == NULL) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    nc = nd->nc;
+
+    if (nc->state != NGX_NATS_STATE_READY) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    cd = &nd->cd;
+
+    sid = cd->subs.nelts;
+
+    sub = ngx_pcalloc(nd->nc_pool, sizeof(ngx_nats_subscription_t));
+    if (sub == NULL) {
+        return NGX_ERROR;
+    }
+
+    sub->client     = client;
+    sub->handle_msg = handle_msg;
+    sub->sid        = sid;
+
+    psub = ngx_array_push(&cd->subs);
+    if (psub == NULL) {
+        return NGX_ERROR;
+    }
+
+    *psub = sub;
+
+    /* no queue support for now... */
+    p = ngx_sprintf(header,
+            "SUB %s %ui\r\n",
+            subject->data, sid);
+	
+    rc = ngx_nats_add_message(nc, (char*)header, (p - header));
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    ngx_nats_flush(nd->nc);
+
+    return sid;
+}
+
+ngx_int_t
+ngx_nats_create_inbox(u_char *buf, size_t bufsize)
+{
+    ngx_time_t     *tp;
+    ngx_int_t       n;
+
+    if (bufsize < 34) {
+        return NGX_ERROR;
+    }
+    
+    tp = ngx_timeofday();
+
+    n = (ngx_int_t) sprintf((char*)buf,
+                "_INBOX.%08x%04x%08x%06x",
+                (int)(((ngx_random() * 31 + tp->sec) * 31) + tp->msec),
+                (int)(ngx_pid & 0x0000ffff),
+                (int)ngx_random(),
+                (int)(ngx_random() & 0x00ffffff));
+
+    buf[n] = 0;
+
+    return n;
+}
+
 
 
