@@ -371,7 +371,7 @@ ngx_nats_core_init_module(ngx_cycle_t *cycle)
     }
     nd->nc_pool->log = log;
 
-    /* 
+    /*
      * buffers are reused because we only have one NATS
      * connection at the time.
      */
@@ -381,19 +381,19 @@ ngx_nats_core_init_module(ngx_cycle_t *cycle)
         return NGX_ERROR;
     }
 
-    nd->nc_write_buf = ngx_nats_buf_create(nccf->pool, 
+    nd->nc_write_buf = ngx_nats_buf_create(nccf->pool,
                                         NGX_NATS_WRITE_BUF_INIT_SIZE);
     if (nd->nc_write_buf == NULL) {
         return NGX_ERROR;
     }
 
-    rc = ngx_array_init(&nd->cd.clients, nccf->pool, 4, 
+    rc = ngx_array_init(&nd->cd.clients, nccf->pool, 4,
                                 sizeof(ngx_nats_client_t *));
     if (rc != NGX_OK) {
         return rc;
     }
 
-    rc = ngx_array_init(&nd->cd.subs, nccf->pool, 8, 
+    rc = ngx_array_init(&nd->cd.subs, nccf->pool, 8,
                                 sizeof(ngx_nats_subscription_t*));
     if (rc != NGX_OK) {
         return rc;

@@ -104,8 +104,8 @@ typedef struct ngx_nats_client_s ngx_nats_client_t;
 typedef void (*ngx_nats_connected_pt)(ngx_nats_client_t *client);
 typedef void (*ngx_nats_disconnected_pt)(ngx_nats_client_t *client);
 typedef void (*ngx_nats_handle_msg_pt)(ngx_nats_client_t *client,
-                    ngx_int_t sid, 
-                    ngx_str_t *replyto, u_char *data, ngx_uint_t len);
+                    ngx_str_t *subject, ngx_int_t sid, ngx_str_t *replyto,
+                    u_char *data, size_t len);
 
 struct ngx_nats_client_s {
 

@@ -57,6 +57,23 @@ static ngx_int_t ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
  * Implementations. 
  *--------------------------------------------------------------------------*/
 
+const u_char *
+ngx_nats_json_type_name(ngx_int_t type)
+{
+    switch(type) 
+    {
+    case NGX_NATS_JSON_NULL:        return (u_char *)"Null";
+    case NGX_NATS_JSON_OBJECT:      return (u_char *)"Object";
+    case NGX_NATS_JSON_ARRAY:       return (u_char *)"Array";
+    case NGX_NATS_JSON_BOOLEAN:     return (u_char *)"Boolean";
+    case NGX_NATS_JSON_INTEGER:     return (u_char *)"Integer";
+    case NGX_NATS_JSON_DOUBLE:      return (u_char *)"Double";
+    case NGX_NATS_JSON_STRING:      return (u_char *)"String";
+    default:                        return (u_char *)"<invalid JSON type>";
+    }
+}
+
+
 static ngx_int_t
 _skipSpaces(ngx_nats_json_parse_ctx_t *pc)
 {

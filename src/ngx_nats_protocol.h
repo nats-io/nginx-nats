@@ -9,7 +9,7 @@
 #include <ngx_core.h>
 
 
-/* 
+/*
  * Must be negative.
  */
 #define NGX_NATS_PROTO_AGAIN                (-1)    /* incomplete message   */
@@ -37,6 +37,7 @@ typedef struct {
     /* For "MSG" */
     ngx_int_t       sid;        /* sids are integers only           */
     ngx_int_t       len;        /* payload length                   */
+    ngx_str_t       subject;    /* subject                          */
     ngx_str_t       replyto;    /* replyTo.len==0 means no replyTo  */
 
     /*

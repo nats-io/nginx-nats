@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera Inc.
+ * Copyright 2012 Apcera Inc. All rights reserved.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -126,9 +126,10 @@ ngx_nats_buf_ensure(ngx_nats_buf_t *buf, size_t size, ngx_int_t compact)
         return NGX_OK;
     }
 
-    if (buf->cap >= (256*1024*1024)) {
+    if (buf->cap >= NGX_NATS_MAX_MESSAGE_SIZE) {
         ngx_log_error(NGX_LOG_CRIT, buf->log, 0,
-        "attempt to increase NATS buffer size to more than 256MB");
+        "attempt to increase NATS buffer size to more than maximum of %i",
+        (ngx_int_t)NGX_NATS_MAX_MESSAGE_SIZE);
         return NGX_ERROR;
     }
 
@@ -206,8 +207,8 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
     ngx_connection_t   *c  = nc->pc.connection;
     ngx_nats_data_t    *nd = nc->nd;
     ngx_nats_client_t **pclient;
-    ngx_int_t           i, n;
-    
+    ngx_int_t           i, n, immediate;
+
     if (nc->ping_timer.timer_set) {
         ngx_del_timer(&nc->ping_timer);
     }
@@ -224,7 +225,12 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
         ngx_event_del_timer(c->write);
     }
 
+    immediate = 0;
+
     if (!(nc->state & NGX_NATS_STATE_BYTES_EXCHANGED)) {
+
+        /* reconnect immediately because we simply could not connect */
+        immediate = 1;
 
         ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
             "cannot connect to NATS at '%s'",
@@ -262,7 +268,27 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
     ngx_nats_buf_reset(nd->nc_write_buf);
 
     if (reconnect != 0) {
-        ngx_nats_process_reconnect(nd);
+
+        /*
+         * if we could not connect at all or simply disconnected
+         * then try to reconnect immediately.
+         * If we did connect and connection broke because of the internal
+         * error or bad message from NATS then wait before reconnecting
+         * so a poison pill message, or we're out of memory, do not put
+         * us into a tight connection loop.
+         */
+        
+        if (reason == NGX_NATS_REASON_DISCONNECTED || immediate) {
+
+            /* this reconnects immediately */
+            ngx_nats_process_reconnect(nd);
+
+        } else {
+
+            /* this runs timer, then reconnects */
+            ngx_nats_add_reconnect_timer(nd);
+
+        }
     }
 }
 
@@ -539,9 +565,9 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
         r = &msg->replyto;
     }
 
-    sub->handle_msg(sub->client, sid, r, 
-                (u_char *) (buf + msg->bstart),
-                (ngx_uint_t) (msg->bend - msg->bstart));
+    sub->handle_msg(sub->client, &msg->subject, sid, r, 
+                (u_char *) (buf->buf + buf->pos + msg->bstart),
+                (msg->bend - msg->bstart) );
 }
 
 
@@ -569,12 +595,68 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         if (rc <= 0) {
 
             if (rc == NGX_NATS_PROTO_AGAIN) {
-                /* have only incomplete header */
+
+                /* have incomplete message */
+
                 ngx_nats_buf_compact(buf);
+
+                if (buf->end == buf->cap) {
+                    
+                    /*
+                     * this means we have full buffer but it doesn't fit
+                     * one message, so need to grow the buffer.
+                     * TODO: not crucial but if it is MSG message then
+                     * we may know by how much to grow the buffer.
+                     * I don't have it now so will double the buffer,
+                     * possibly several times, but it'll happen only until
+                     * the buffer gorws enough, so is OK.
+                     */
+                    
+                    if (nc->srv_max_payload > 0 && 
+                                buf->cap >= (size_t)nc->srv_max_payload) {
+
+                        /* NATS sent message larger than promised */
+                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                            "NATS sent message larger than may payload of %i",
+                            nc->srv_max_payload);
+            
+                        ngx_nats_close_connection(nc,
+                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
+
+                        return NGX_ERROR;
+                    }
+                    
+                    if (buf->cap >= NGX_NATS_MAX_MESSAGE_SIZE) {
+
+                        /* TODO: check max_payload mot more than 256MB? */
+
+                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                            "NATS sent message larger than 256MB");
+            
+                        ngx_nats_close_connection(nc,
+                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
+
+                        return NGX_ERROR;
+                    }
+                    
+                    /* this will double the buf */
+                    rc = ngx_nats_buf_ensure(buf, buf->cap - 1, 0);
+                    if (rc != NGX_OK) {
+                        /* out of memory */
+                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                            "out of memory receiving NATS message");
+            
+                        ngx_nats_close_connection(nc,
+                            NGX_NATS_REASON_NO_MEMORY, 1);
+
+                        return NGX_ERROR;
+                    }
+                }
+
                 return NGX_OK;
             }
 
-            if (rc == NGX_NATS_PROTO_AGAIN) {
+            if (rc == NGX_NATS_PROTO_ERR_ERROR) {
 
                 ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
                     "internal error processing NATS message");
@@ -692,12 +774,6 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 
             return NGX_ERROR;
         }
-
-        /*
-        fprintf(stderr,
-                "***>>> received from NATS msg '%s', skip=%d\n",
-                ngx_nats_protocol_msg_name(msg.type), (int)skip);
-        */
 
         /* skip processed message */
 

@@ -85,6 +85,8 @@ typedef struct {
 ngx_int_t ngx_nats_json_parse(ngx_pool_t *pool, ngx_nats_json_value_t *json,
                     char *s, size_t len);
 
+const u_char * ngx_nats_json_type_name(ngx_int_t type);
+
 /*
  * For testing only.
  */

@@ -18,6 +18,7 @@
 #define NGX_NATS_REASON_WRITE_TIMEOUT   (4) /* writing into NATS timed out  */
 #define NGX_NATS_REASON_BAD_PROTOCOL    (5) /* NATS sent msg I cant parse   */
 #define NGX_NATS_REASON_DISCONNECTED    (6) /* NATS disconnected            */
+#define NGX_NATS_REASON_NO_MEMORY       (98)
 #define NGX_NATS_REASON_INTERNAL_ERROR  (99)
 
 
@@ -31,6 +32,8 @@
 #define NGX_NATS_STATE_INFO_RECEIVED    0x08
 #define NGX_NATS_STATE_READY            0x0f
 
+
+#define NGX_NATS_MAX_MESSAGE_SIZE       (256 * 1024 * 1024)     /* 256MB */
 
 typedef struct ngx_nats_data_s ngx_nats_data_t;
 

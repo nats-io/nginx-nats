@@ -38,6 +38,8 @@ static ngx_int_t ngx_nats_parse_msg (ngx_nats_msg_t *m, size_t hlen,
                     u_char* s, size_t len);
 
 
+#define _NATS_PARSE_ERR ((size_t)-1)
+
 /*---------------------------------------------------------------------------
  * Implementations.
  *--------------------------------------------------------------------------*/
@@ -58,7 +60,7 @@ ngx_nats_protocol_msg_name(ngx_int_t type)
 
 
 static ngx_int_t
-_nats_atoi(u_char *line, size_t n, ngx_int_t *result)
+_nats_atoi(u_char *s, size_t n, ngx_int_t *result)
 {
     ngx_int_t  value;
 
@@ -66,16 +68,59 @@ _nats_atoi(u_char *line, size_t n, ngx_int_t *result)
         return NGX_ERROR;
     }
 
-    for (value = 0; n--; line++) {
-        if (*line < '0' || *line > '9') {
+    for (value = 0; n--; s++) {
+        if (*s < '0' || *s > '9') {
             return NGX_ERROR;
         }
 
-        value = value * 10 + (*line - '0');
+        value = value * 10 + (*s - '0');
     }
 
     *result = value;
     return NGX_OK;
+}
+
+static size_t
+_nats_token(u_char *s, size_t pos, size_t max, size_t *ns, size_t *ne)
+{
+    char q = 0;
+    
+    *ns = max;
+    *ne = max;
+    
+    /* skip spaces */
+    for ( ; pos < max && s[pos] == ' '; pos++);
+    if (pos == max) {
+        return max;
+    }
+
+    *ns = pos;
+    if (s[pos] == '\'' || s[pos] == '\"') {
+        if (pos >= max-1) {
+            return _NATS_PARSE_ERR;
+        }
+        q = s[pos++];
+        for ( ;; ) {
+            if (s[pos] == '\\') {
+                if (pos >= max-1) {
+                    return _NATS_PARSE_ERR;
+                }
+                pos += 2;
+            } else if (s[pos] == q) {
+                *ne = pos+1;
+                return pos + 1;
+            } else if (pos >= max-1) {
+                return _NATS_PARSE_ERR;
+            } else {
+                pos++;
+            }
+        }
+    }
+
+    for ( ; pos < max && s[pos] != ' ' && s[pos] != '\r'; pos++);
+    
+    *ne = pos;
+    return pos;
 }
 
 
@@ -103,6 +148,12 @@ ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
     }
 
     if (p >= len) {
+
+        /*
+         * TODO: return error if no complete header in first 4096 bytes.
+         * Only "-ERR" may be quite long due to error message, others can't.
+         */
+
         return NGX_NATS_PROTO_AGAIN;
     }
 
@@ -303,6 +354,8 @@ ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
      * "INFO {...fields...}\r\n"
      */
 
+    /* TODO: return error if no complete header in first 1024 bytes */
+
     size_t  n;
 
     m->type = NGX_NATS_MSG_INFO;
@@ -337,102 +390,89 @@ ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 }
 
 
+
 ngx_int_t
 ngx_nats_parse_msg(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 {
     /*
-     * "MSG Sid [reply-to] Len\r\n...payload...\r\n".
-     *
+     * "MSG Subject Sid [reply-to] Len\r\n...payload...\r\n".
      * "reply-to" is optional, may not have spaces.
+     * We do have at least one char after "MSG".
      */
 
-    size_t      n, ns, nend;
+    /* TODO: return error if no complete header in first 1024 bytes */
+
+    size_t      n, max, ns, ne, ns2, ne2;
     ngx_int_t   rc;
 
     m->type = NGX_NATS_MSG_MSG;
 
-    for (n = hlen; n < len && s[n] == ' '; n++);
-
-    if (n >= len) {
-        return NGX_NATS_PROTO_AGAIN;
-    }
-
-    if (n == hlen) {             /* no space after MSG */
+    if (s[hlen] != ' ') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    ns = n;         /* start of Sid */
-
-    for (n++; n < len && s[n] != '\r'; n++);
-
-    /* Means we didn't find or found as very last available char */
+    for (n = hlen; n < len-1 && s[n] != '\r'; n++);
     if (n >= len-1) {
         return NGX_NATS_PROTO_AGAIN;
     }
-
     if (s[n+1] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    /* Have full header, ns points to SID start, n points to \r */
+    /* have full header */
+    max = n;
 
-    nend = n;
+    n = hlen;
 
-    /* Parse Sid */
-
-    for (n = ns; n < nend && s[n] != ' ' && s[n] != '\r'; n++); /* find end */
-    if (n >= nend) {
+    /* get subject */
+    n = _nats_token(s, n, max, &ns, &ne);
+    if (n == _NATS_PARSE_ERR || n == max || ns >= ne) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
+    m->subject.data = (u_char *)(s + ns);
+    m->subject.len  = ne - ns;
 
-    rc = _nats_atoi((u_char *)(s + ns), n - ns, &m->sid);
+    /* get Sid */
+    n = _nats_token(s, n, max, &ns, &ne);
+    if (n == _NATS_PARSE_ERR || n == max || ns >= ne) {
+        return NGX_NATS_PROTO_ERR_INVALID_MSG;
+    }
+    rc = _nats_atoi((u_char *)(s + ns), ne - ns, &m->sid);
     if (rc != NGX_OK) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    for ( ; n < nend && s[n] == ' '; n++);     /* skip spaces */
-    if (n >= nend) {
+    /* get next one or two tokens */
+    n = _nats_token(s, n, max, &ns, &ne);
+   if (n == _NATS_PARSE_ERR || ns >= ne) {     /* may be last token */
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    ns = n;     /* start of reply-to *OR* Len */
-
-    /* See if have space before ns and nend. If yes then we have reply-to. */
-
-    for (n = ns + 1; n < nend && s[n] != ' '; n++);
-
-    if (n < nend) {
-        /* have space before nend, so [ns, n] is reply-to */
-        m->replyto.len  = ns - n;
-        m->replyto.data = (u_char *)(s + ns);
-        m->replyto.data[m->replyto.len] = 0;
-
-        /* skip spaces */
-        for ( ; n < nend && s[n] != ' '; n++);
-        if (n >= nend) {
+    if (n < max) { /* may have one more token */
+        n = _nats_token(s, n, max, &ns2, &ne2);
+        if (n == _NATS_PARSE_ERR) {
             return NGX_NATS_PROTO_ERR_INVALID_MSG;
         }
-
-        ns = n;
+        if (ns2 < ne2) {
+            /* have token */
+            m->replyto.data = (u_char *)(s + ns);
+            m->replyto.len  = ne - ns;
+            ns = ns2;
+            ne = ne2;
+        }
+        /* check no more tokens */
+        n = _nats_token(s, n, max, &ns2, &ne2);
+        if (n == _NATS_PARSE_ERR || n < max || ns2 < ne2) {
+            return NGX_NATS_PROTO_ERR_INVALID_MSG;
+        }
     }
 
-    /* last is Len that starts at ns */
-    for (n = ns; n < nend && s[n] != ' ' && s[n] != '\r'; n++); /* find end */
-    if (n == ns) {
-        return NGX_NATS_PROTO_ERR_INVALID_MSG;
-    }
-
-    rc = _nats_atoi((u_char *)(s + ns), n - ns, &m->len);
+    rc = _nats_atoi((u_char *)(s + ns), ne - ns, &m->len);
     if (rc != NGX_OK) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    /*
-     * Check have full payload. Need m->len+2 (last "\r\n").
-     * Payload starts at nend + 2.
-     */
-
-    ns = nend + 2;
+    ns = max + 2;   /* start of payload */
 
     if ((ns + m->len + 2) > len) {
         return NGX_NATS_PROTO_AGAIN;
@@ -444,6 +484,13 @@ ngx_nats_parse_msg(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->bstart = ns;
     m->bend   = ns + m->len;
+
+    m->subject.data[m->subject.len] = 0;
+
+    if (m->replyto.len > 0) {
+        m->replyto.data[m->replyto.len] = 0;
+    }
+
     s[m->bend] = 0;
 
     return (ngx_int_t) (ns + m->len + 2);
