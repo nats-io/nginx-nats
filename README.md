@@ -5,17 +5,22 @@ Nginx module that implements NATS client.
 
 #### Configuration:
 
-        nats {
-            server host1:port1;
-            ...
-            server hostN:portN;
+NATS configuration is a section specified at the main level (i.e. not inside the `http` section).
 
-            reconnect 2s;
-            ping      30s;
+    nats {
+        server host1:port1;
+        ...
+        server hostN:portN;
 
-            user      <username>;
-            password  <password>;
-        }
+        reconnect 2s;
+        ping      30s;
+
+        user      <username>;
+        password  <password>;
+    }
+    
+    http {
+        ....
 
 * One or more NATS servers can be specified. Nginx tries in listed order and connects to first available.
 * If connection cannot be created or NATS disconnects Nginx tries all listed servers
