@@ -1,20 +1,10 @@
 
-This is work in progress, not finished by any means.
-As it moves to some (intermediate) finished state this will be populated with real TODO items.
-
-For now, to make sure it is planned, the major TODOs are:
-
-- Create README documenting the build and use of this module.
 - Add license when we know what license we should use.
 - Make sure copyright statements are correct in source files (there are some but not sure).
-- Add tests (not trivial for this thing).
 - Programming items:
-    - General finishing of the code, in stages.
-    - Finalize public interfaces (i.e. functions used by other modules).
     - Implement user/password for each server.
     - Parameterize read/write timeouts.
-    - Implement specific log for NATS.
-    - Decide if need and implement SSL if we do need it.
-    - Further out:
-         - improve read/write buffers management.
+    - SSL connection with NATS.
+    - Improve write buffers management.
+
 
