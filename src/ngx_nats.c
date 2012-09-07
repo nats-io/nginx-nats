@@ -9,7 +9,6 @@
 #include "ngx_nats.h"
 #include "ngx_nats_comm.h"
 
-
 /*
  * This file deals with the modules, setup, configuration parsing etc.
  * Working with NATS is in ngx_nats_comm.c.
@@ -27,6 +26,32 @@
  *     - improve buffers.
  *     - use hash in JSON objects.
  */
+
+
+
+/*
+ * TODO:
+ * I don't know about (NGX_FREEBSD) or (NGX_SOLARIS),
+ * deal with them at some point.
+ *
+ * NGX_FREEBSD  -- ???
+ * NGX_SOLARIS  -- ???
+ * POSIX        -- ???
+ *
+ * For now we can work without determining the local IP, but knowing it
+ * is better. I may be mising it but cannot find if Nginx knows the local
+ * IP, it probably doesn't need it. We need *any* of the local IPs that
+ * we can use for uniqueness and to reach the router in testing.
+ */
+
+#if (NGX_LINUX) || (NGX_DARWIN)
+    #include <net/if.h>
+    #include <ifaddrs.h>
+#elif (NGX_WIN32)
+    /* Probably don't need anything, check when porting. */
+#else
+    /* We'll go without knowing our local IP */
+#endif
 
 
 /*---------------------------------------------------------------------------
@@ -53,6 +78,8 @@ static void ngx_nats_core_exit_process(ngx_cycle_t *cycle);
  */
 static char * ngx_nats_core_server(ngx_conf_t *cf,
                     ngx_command_t *cmd, void *dummy);
+
+static void ngx_nats_init_local_ip(ngx_cycle_t *cycle);
 
 /*---------------------------------------------------------------------------
  * Variables
@@ -406,6 +433,8 @@ ngx_nats_core_init_module(ngx_cycle_t *cycle)
     nd->curr_index  = -1;
     nd->last_index  = 0;
 
+    ngx_nats_init_local_ip(cycle);
+
     return NGX_OK;
 }
 
@@ -422,6 +451,8 @@ ngx_nats_core_init_process(ngx_cycle_t *cycle)
     nccf = (ngx_nats_core_conf_t*) ngx_nats_get_core_conf(cycle->conf_ctx);
 
     nccf->log = cycle->log;
+
+    ngx_nats_seed_random();
 
     /*
      * Returns error in case of some hard failure like no memory
@@ -504,4 +535,189 @@ ngx_nats_core_server(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     return NGX_CONF_OK;
 }
+
+
+static ngx_addr_t *_ngx_nats_local_ip = NULL;
+
+static void
+ngx_nats_init_local_ip(ngx_cycle_t *cycle)
+{
+    /* TODO: port to Windows when need it, extend to other platforms. */
+
+#if (NGX_LINUX) || (NGX_DARWIN)
+
+    struct ifaddrs     *ifaddrs, *ifa;
+    int                 rc, family;
+    char                host_ip4[32];
+    char                host_ip6[96];
+    struct ifaddrs     *ifa_ip4 = NULL;
+    struct ifaddrs     *ifa_ip6 = NULL;
+    struct ifaddrs     *store_ifa = NULL;
+    char               *store_host = NULL;
+    size_t              store_socklen;
+    ngx_int_t           lev;
+
+    ifaddrs = NULL;
+
+    rc = getifaddrs(&ifaddrs);
+    if (rc != 0) {
+        ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno, "getifaddrs() failed");
+        return;
+    }
+
+    host_ip4[0] = 0;
+    host_ip6[0] = 0;
+        
+    for (ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) { 
+
+        if (ifa->ifa_addr == NULL)
+            continue;
+
+        family = ifa->ifa_addr->sa_family;
+        if (family != AF_INET && family != AF_INET6)
+            continue;
+
+        if ((ifa->ifa_flags & IFF_LOOPBACK) != 0) {
+            continue;
+        }
+
+        if (family != AF_INET && family != AF_INET6)
+            continue;
+        
+        if (family == AF_INET) {
+            if (ifa_ip4 == NULL) {
+                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), 
+                        host_ip4, sizeof(host_ip4), NULL, 0, NI_NUMERICHOST);
+                if (rc != 0) {
+                    ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
+                        "getnameinfo() failed for IPv4 interface");
+                } else {
+                    ifa_ip4 = ifa;
+                }
+            }
+        } else {        /* AF_INET6 */
+            if (ifa_ip6 == NULL) {
+                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in6), 
+                        host_ip6, sizeof(host_ip6), NULL, 0, NI_NUMERICHOST);
+                if (rc != 0) {
+                    ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
+                        "getnameinfo() failed for IPv6 interface");
+                } else {
+                    ifa_ip6 = ifa;
+                }
+            }
+        }
+    }
+
+    lev = cycle->log->log_level;
+    cycle->log->log_level = NGX_LOG_INFO;
+
+    if (ifa_ip4 != NULL) {
+        ngx_log_error(NGX_LOG_INFO, cycle->log, 0,
+            "nats: found local IPv4 address '%s'", host_ip4);
+        store_ifa  = ifa_ip4;
+        store_host = &host_ip4[0];
+        store_socklen = sizeof(struct sockaddr_in);
+    }
+
+    if (ifa_ip6 != NULL) {
+        ngx_log_error(NGX_LOG_INFO, cycle->log, 0,
+            "nats: found local IPv6 address '%s'", host_ip6);
+        if (store_ifa == NULL) {
+            store_ifa  = ifa_ip6;
+            store_host = &host_ip6[0];
+            store_socklen = sizeof(struct sockaddr_in6);
+        }
+    }
+
+    cycle->log->log_level = lev;
+
+    /* if we failed to alloc we just go without it */
+    if (store_ifa != NULL) {
+
+        _ngx_nats_local_ip = ngx_pcalloc(cycle->pool, sizeof(ngx_addr_t));
+        if (_ngx_nats_local_ip == NULL) {
+            goto fail;
+        }
+
+        _ngx_nats_local_ip->socklen = store_socklen;
+        _ngx_nats_local_ip->sockaddr = ngx_pcalloc(cycle->pool, _ngx_nats_local_ip->socklen);
+        if (_ngx_nats_local_ip->sockaddr == NULL) {
+            goto fail;
+        }
+
+        _ngx_nats_local_ip->name.len = ngx_strlen(store_host);
+        _ngx_nats_local_ip->name.data = ngx_pnalloc(cycle->pool, 
+                            _ngx_nats_local_ip->name.len + 1);
+        if (_ngx_nats_local_ip->name.data == NULL) {
+            goto fail;
+        }
+
+        ngx_memcpy(_ngx_nats_local_ip->sockaddr, store_ifa->ifa_addr, 
+                    _ngx_nats_local_ip->socklen);
+        ngx_memcpy(_ngx_nats_local_ip->name.data, store_host, 
+                    ngx_strlen(store_host) + 1);
+
+        goto end;
+    }
+
+fail:
+
+    _ngx_nats_local_ip = NULL;
+
+end:
+
+    freeifaddrs(ifaddrs);
+
+#else
+
+#endif
+
+}
+
+
+ngx_addr_t *
+ngx_nats_get_local_ip(void)
+{
+    return _ngx_nats_local_ip;
+}
+
+
+/*
+ * TODO:
+ * For our purposes, on UNIXes using rand() is marginally OK, but really we
+ * should use something else instead. On Windows using rand() is unacceptable
+ * because for historical reasons it's still from 0 to 32767 only, so useless.
+ * Should use SFMT when have time.
+ *
+ * This should be called from process init, not module init.
+ */
+void
+ngx_nats_seed_random(void)
+{
+    ngx_time_t             *tp;
+    ngx_addr_t             *local_ip;
+    unsigned int            pid;
+    unsigned int            seed = 0;
+    size_t                  i;
+
+    ngx_time_update();
+    tp = ngx_timeofday();
+    pid = (unsigned int)ngx_pid;
+    local_ip = ngx_nats_get_local_ip();
+
+    seed = pid * pid * pid;
+    seed = (seed * 31) + tp->sec;
+    seed = (seed * 31) + tp->msec;
+
+    if (local_ip != NULL) {
+        
+        for (i = 0; i < local_ip->name.len; i++) {
+            seed = (seed * 31) + (unsigned int)local_ip->name.data[i];
+        }
+    }
+
+    srand(seed);
+}
+
 

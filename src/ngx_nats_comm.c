@@ -438,7 +438,7 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
     log->log_level = NGX_LOG_INFO;
 
     ngx_log_error(NGX_LOG_INFO, nd->log, 0,
-        "connected to NATS at '%s': version=%s id=%s",
+        "nats: connected to NATS at '%s': version='%s'",
         nc->server->url.data, 
         nc->srv_version->data,
         nc->srv_id->data);
@@ -1290,29 +1290,63 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
     return sid;
 }
 
+static uint32_t
+_nats_rand4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) 
+{
+    return ((((a * 31) + b) * 31) + c) * 31 + d;
+}
+
+/* TODO: change impl when we'll get SFMT? */
 ngx_int_t
 ngx_nats_create_inbox(u_char *buf, size_t bufsize)
 {
     ngx_time_t     *tp;
-    ngx_int_t       n;
+    ngx_addr_t     *local_ip;
+    u_char         *pend;
+    size_t          i;
+    uint32_t        partA, partB, partC, partD, ipvar;
+    uint32_t        r1, r2, r3, r4;
 
     if (bufsize < 34) {
         return NGX_ERROR;
     }
-    
+
+    ngx_time_update();
     tp = ngx_timeofday();
 
-    n = (ngx_int_t) sprintf((char*)buf,
-                "_INBOX.%08x%04x%08x%06x",
-                (int)(((ngx_random() * 31 + tp->sec) * 31) + tp->msec),
-                (int)(ngx_pid & 0x0000ffff),
-                (int)ngx_random(),
-                (int)(ngx_random() & 0x00ffffff));
+    local_ip = ngx_nats_get_local_ip();
 
-    buf[n] = 0;
+    ipvar = 0;
+    
+    if (local_ip != NULL) {
+        for (i = 0; i < local_ip->name.len; i++) {
+            ipvar = (ipvar * 31) + (uint32_t)local_ip->name.data[i];
+        }
+    }
 
-    return n;
+    /* Nginx seeds random to same value in all workers *after*
+     * it calls process_init for user modules. Then all workers
+     * get same random sequence. I need to look more into it,
+     * but generally I need my own random not depending on Nginx.
+     * Then I won't have to init it every time here. Performance is not
+     * an issue but I still shouldn't do it.
+     */
+    ngx_nats_seed_random();
+
+    r1 = (uint32_t) ngx_random();
+    r2 = (uint32_t) ngx_random();
+    r3 = (uint32_t) ngx_random();
+    r4 = (uint32_t) ngx_random();
+
+    partA = _nats_rand4(ipvar, r1, (uint32_t)ngx_pid, (uint32_t)tp->msec);
+    partB = _nats_rand4(ipvar, r2, (uint32_t)ngx_pid, (uint32_t)tp->sec);
+    partC = _nats_rand4(ipvar, r3, (uint32_t)tp->sec, (uint32_t)tp->msec);
+    partD = (uint32_t) (r4 & 0x00ff);   /* 1 byte only */
+    
+    pend = ngx_sprintf(buf, "_INBOX.%08xD%08xD%08xD%02xD", partA, partB, partC, partD);
+
+    *pend = 0;
+
+    return (ngx_int_t)(pend - buf);
 }
-
-
 
