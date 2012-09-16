@@ -621,7 +621,7 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
 
     if (ifa_ip4 != NULL) {
         ngx_log_error(NGX_LOG_INFO, cycle->log, 0,
-            "nats: detected local IPv4 address '%s'", host_ip4);
+            "nats: found local IPv4 address '%s'", host_ip4);
         store_ifa  = ifa_ip4;
         store_host = &host_ip4[0];
         store_socklen = sizeof(struct sockaddr_in);
@@ -629,7 +629,7 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
 
     if (ifa_ip6 != NULL) {
         ngx_log_error(NGX_LOG_INFO, cycle->log, 0,
-            "nats: detected local IPv6 address '%s'", host_ip6);
+            "nats: found local IPv6 address '%s'", host_ip6);
         if (store_ifa == NULL) {
             store_ifa  = ifa_ip6;
             store_host = &host_ip6[0];
