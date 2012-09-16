@@ -123,6 +123,11 @@ ngx_int_t ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
                 ngx_nats_handle_msg_pt handle_msg);
 ngx_int_t ngx_nats_create_inbox(u_char *buf, size_t bufsize);
 
+/* May return NULL, then we don't know local IP */
+ngx_addr_t * ngx_nats_get_local_ip(void);
+
+void ngx_nats_seed_random(void);
+
 
 #endif /* _NGX_NATS_H_INCLUDED_ */
 
