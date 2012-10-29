@@ -311,8 +311,9 @@ ngx_nats_json_ensure_str(ngx_nats_json_parse_ctx_t *pc, size_t n)
         
         ngx_memcpy(ns, pc->str, pc->str_pos);
         
-        ngx_pfree(pc->pool, pc->str);   /* may not free, it's OK */
+        ngx_pfree(pc->pool, pc->str);
         
+        pc->str     = ns;
         pc->str_cap = sz;
     }
 
@@ -344,6 +345,8 @@ ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
 
     while(n < max) {
     
+        pc->str_pos = nout;
+
         if (pc->str_pos >= mspos) {
             if (ngx_nats_json_ensure_str(pc, 2) != 0) {
                 return NGX_NATS_JSON_ERR_ERROR;
