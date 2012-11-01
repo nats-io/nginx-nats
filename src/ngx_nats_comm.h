@@ -83,22 +83,25 @@ typedef struct {
 
 typedef struct {
 
-    ngx_nats_client_t          *client;
-    ngx_nats_handle_msg_pt      handle_msg;
-    ngx_int_t                   sid;
+    ngx_nats_client_t      *client;
+    ngx_nats_handle_msg_pt  handle_msg;
+    ngx_int_t               sid;
+    ngx_int_t               max;
+    ngx_int_t               recv;
 
 } ngx_nats_subscription_t;
 
 
 typedef struct {
 
-    ngx_array_t         clients;        /* ngx_nats_client_t*           */
+    ngx_array_t             clients;        /* ngx_nats_client_t*           */
 
     /*
      * TODO: use ngx_hash? array more economical if just a few
-     * non-deletable subscriptions.
+     * subscriptions.
      */
-    ngx_array_t         subs;           /* ngx_nats_subscription_t*     */
+    ngx_array_t             subs;           /* ngx_nats_subscription_t      */
+    ngx_int_t               next_id;
 
 } ngx_nats_client_data_t;
 
@@ -114,7 +117,7 @@ struct ngx_nats_data_s {
     ngx_nats_client_data_t  cd;
 
     ngx_nats_connection_t  *nc;             /* currently one only           */
-    ngx_pool_t             *nc_pool;        /* resettable                   */
+    ngx_pool_t             *nc_pool;
     ngx_nats_buf_t         *nc_read_buf;
     ngx_nats_buf_t         *nc_write_buf;
 
