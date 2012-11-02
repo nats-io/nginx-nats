@@ -586,7 +586,7 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
                 ngx_nats_json_value_t *v)
 {
     ngx_int_t   rc;
-    char        c;
+    char        c, c2;
     size_t      ilen, n;
     char       *p;
     char       *t;
@@ -615,7 +615,8 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
             return NGX_NATS_JSON_ERR_ERROR;
         }
 
-        return ngx_nats_json_parse_object(pc, v->value.vobj);
+        rc = ngx_nats_json_parse_object(pc, v->value.vobj);
+        return rc;
     }
 
     if (c == '[') {
@@ -719,8 +720,8 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
     }
 
     for (n = pc->istart; n < pc->pos; n++) {
-        c = t[n];
-        if (c == '.' || c == 'e' || c == 'E') {
+        c2 = t[n];
+        if (c2 == '.' || c2 == 'e' || c2 == 'E') {
             v->type = NGX_NATS_JSON_DOUBLE;
             return ngx_nats_json_parse_double(pc, v);
         }
@@ -791,6 +792,8 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
     ngx_uint_t              n, lim;
     ngx_nats_json_value_t  *v2;
     ngx_nats_json_field_t  *f;
+    char                    numbuf[28];
+    int                     pos;
 
     switch(v->type)
     {
@@ -810,9 +813,12 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
             } else {
                 u64 = (uint64_t) v->value.vint;
             }
+            numbuf[sizeof(numbuf)-1] = 0;
+            pos = sizeof(numbuf)-1;
             do {
-                fprintf(stderr,"%c",(char)(u64 % 10 + '0'));
+                numbuf[--pos] = (char)(u64 % 10 + '0');
             } while (u64 /= 10);
+            fprintf(stderr,"%s",((char*)numbuf) + pos);
             return;
 
         case NGX_NATS_JSON_DOUBLE:
