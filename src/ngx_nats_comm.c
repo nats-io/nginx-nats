@@ -35,6 +35,7 @@ static void ngx_nats_free_peer(ngx_peer_connection_t *pc,
 static ngx_int_t ngx_nats_conn_err_reported = 0;
 
 ngx_nats_data_t *ngx_nats_data = NULL;
+static int __random_seeded = 0;
 
 /*---------------------------------------------------------------------------
  * Implementations.
@@ -260,6 +261,7 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
     }
 
     nd->cd.subs.nelts = 0;      /* remove all subscriptions */
+    nd->cd.next_id = 0;
 
     nd->nc = NULL;
 
@@ -538,25 +540,90 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, char *bytes,
     return NGX_OK;
 }
 
+/*
+ * When have time switch to using hash. Currenly we have only
+ * a few subscriptions like 4-5 at a time so linear search is
+ * not too bad but of course using hash is in order.
+ * One day in future, when I'm not so darn overwhelmed with work,
+ * I still hope it'll happen :).
+ */
+
+ngx_nats_subscription_t *
+ngx_nats_get_subscription(ngx_nats_connection_t *nc, ngx_int_t sid)
+{
+    ngx_nats_subscription_t    *sub;
+    ngx_int_t                   i, n;
+
+    n    = nc->nd->cd.subs.nelts;
+    sub  = nc->nd->cd.subs.elts;
+
+    for (i = 0; i < n; i++, sub++) {
+        if (sub->sid == sid)
+            return sub;
+    }
+    
+    return NULL;
+}
+
+ngx_nats_subscription_t *
+ngx_nats_add_subscription(ngx_nats_connection_t *nc, ngx_int_t sid)
+{
+    ngx_nats_subscription_t    *sub;
+    ngx_int_t                   i, n;
+
+    n    = nc->nd->cd.subs.nelts;
+    sub  = nc->nd->cd.subs.elts;
+
+    for (i = 0; i < n; i++, sub++) {
+        if (sub->sid == 0)
+            return sub;
+    }
+
+    sub = ngx_array_push(&nc->nd->cd.subs);
+    if (sub == NULL) {
+        return NULL;
+    }
+    
+    sub->sid = sid;
+    return sub;
+}
+
+ngx_int_t
+ngx_nats_remove_subscription(ngx_nats_connection_t *nc, ngx_int_t sid)
+{
+    ngx_nats_subscription_t    *sub;
+    ngx_int_t                   i, n;
+
+    if (sid == 0) {
+        return sid;
+    }
+
+    n    = nc->nd->cd.subs.nelts;
+    sub  = nc->nd->cd.subs.elts;
+
+    for (i = 0; i < n; i++, sub++) {
+        if (sub->sid == sid) {
+            sub->sid = 0;
+            return sid;
+        }
+    }
+
+    return 0;
+}
+
 static void
 ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
                 ngx_nats_msg_t *msg)
 {
-    ngx_int_t                   n, sid;
-    ngx_nats_subscription_t   **psub;
     ngx_nats_subscription_t    *sub;
+    ngx_nats_handle_msg_pt      hm;
+    ngx_nats_client_t          *client;
     ngx_str_t                  *r = NULL;
+    ngx_int_t                   sid;
 
     sid  = msg->sid;
-    n    = nc->nd->cd.subs.nelts;
-    psub = nc->nd->cd.subs.elts;
 
-    /* could receive rogue message? */
-    if (sid < 0 || sid >= n) {
-        return;
-    }
-
-    sub = psub[sid];
+    sub = ngx_nats_get_subscription(nc, sid);
     if (sub == NULL) {
         return;
     }
@@ -565,9 +632,20 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
         r = &msg->replyto;
     }
 
-    sub->handle_msg(sub->client, &msg->subject, sid, r, 
-                (u_char *) (buf->buf + buf->pos + msg->bstart),
-                (msg->bend - msg->bstart) );
+    /* we may remove subscription so cache these */
+    hm = sub->handle_msg;
+    client = sub->client;
+
+    if (sub->max > 0) {
+        sub->recv++;
+        if (sub->recv >= sub->max) {
+            ngx_nats_remove_subscription(nc, sub->sid);
+        }
+    }
+
+    hm(client, &msg->subject, sid, r, 
+        (u_char *) (buf->buf + buf->pos + msg->bstart),
+        (msg->bend - msg->bstart) );
 }
 
 
@@ -1027,17 +1105,17 @@ ngx_nats_connect_loop(ngx_nats_data_t *nd)
 
     a = ns->addrs;  /* TODO: handle multiple addrs? */
 
-    nc->pc.data         = nd;
-    nc->pool            = nd->nc_pool;
-    nc->read_buf        = nd->nc_read_buf;
-    nc->write_buf       = nd->nc_write_buf;
-    nc->pc.log          = nccf->log;
-    nc->pc.sockaddr     = a->sockaddr;
-    nc->pc.socklen      = a->socklen;
-    nc->pc.name         = &ns->url;
-    nc->pc.tries        = 1;
-    nc->pc.get          = ngx_nats_get_peer;
-    nc->pc.free         = ngx_nats_free_peer;
+    nc->pc.data     = nd;
+    nc->pool        = nd->nc_pool;
+    nc->read_buf    = nd->nc_read_buf;
+    nc->write_buf   = nd->nc_write_buf;
+    nc->pc.log      = nccf->log;
+    nc->pc.sockaddr = a->sockaddr;
+    nc->pc.socklen  = a->socklen;
+    nc->pc.name     = &ns->url;
+    nc->pc.tries    = 1;
+    nc->pc.get      = ngx_nats_get_peer;
+    nc->pc.free     = ngx_nats_free_peer;
 
     nc->server = ns;
 
@@ -1230,13 +1308,12 @@ ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
 
 ngx_int_t
 ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
-                ngx_nats_handle_msg_pt handle_msg)
+                ngx_int_t max, ngx_nats_handle_msg_pt handle_msg)
 {
     ngx_nats_data_t            *nd = ngx_nats_data;
     ngx_nats_connection_t      *nc;
     ngx_nats_client_data_t     *cd;
     ngx_nats_subscription_t    *sub;
-    ngx_nats_subscription_t   **psub;
     u_char                      header[512+64];   /* TODO: !! */
     u_char                     *p;
     ngx_int_t                   sid, rc;
@@ -1257,9 +1334,8 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
 
     cd = &nd->cd;
 
-    sid = cd->subs.nelts;
-
-    sub = ngx_pcalloc(nd->nc_pool, sizeof(ngx_nats_subscription_t));
+    sid = ++cd->next_id;
+    sub = ngx_nats_add_subscription(nc, sid);
     if (sub == NULL) {
         return NGX_ERROR;
     }
@@ -1267,17 +1343,63 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
     sub->client     = client;
     sub->handle_msg = handle_msg;
     sub->sid        = sid;
-
-    psub = ngx_array_push(&cd->subs);
-    if (psub == NULL) {
-        return NGX_ERROR;
-    }
-
-    *psub = sub;
+    sub->max        = max;
+    sub->recv       = 0;  
 
     /* no queue support for now... */
     p = ngx_sprintf(header, "SUB %s %ui\r\n", subject->data, sid);
-	
+    rc = ngx_nats_add_message(nc, (char*)header, (p - header));
+    if (rc != NGX_OK) {
+        return rc;
+    }
+
+    if (max > 0) {
+        p = ngx_sprintf(header, "UNSUB %ui %ui\r\n",  sid, max);
+        rc = ngx_nats_add_message(nc, (char*)header, (p - header));
+        if (rc != NGX_OK) {
+            return rc;
+        }
+    }
+
+    ngx_nats_flush(nd->nc);
+
+    return sid;
+}
+
+
+ngx_int_t
+ngx_nats_unsubscribe(ngx_nats_client_t *client, ngx_int_t sid)
+{
+    ngx_nats_data_t            *nd = ngx_nats_data;
+    ngx_nats_connection_t      *nc;
+    u_char                      header[512+64];   /* TODO: !! */
+    u_char                     *p;
+    ngx_int_t                   rc, removed;
+
+    if (sid == 0) {
+        return NGX_DECLINED;
+    }
+    
+    if (nd == NULL) {
+        return NGX_ABORT;   /* nats not defined in the config */
+    }
+
+    if (nd->nc == NULL) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    nc = nd->nc;
+
+    if (nc->state != NGX_NATS_STATE_READY) {
+        return NGX_ERROR;       /* not connected    */
+    }
+
+    removed = ngx_nats_remove_subscription(nc, sid);
+    if (removed == 0) {
+        return NGX_DECLINED;
+    }
+
+    p = ngx_sprintf(header, "UNSUB %ui\r\n",  sid);
     rc = ngx_nats_add_message(nc, (char*)header, (p - header));
     if (rc != NGX_OK) {
         return rc;
@@ -1285,8 +1407,9 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
 
     ngx_nats_flush(nd->nc);
 
-    return sid;
+    return NGX_OK;
 }
+
 
 static uint32_t
 _nats_rand4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) 
@@ -1329,7 +1452,10 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
      * Then I won't have to init it every time here. Performance is not
      * an issue but I still shouldn't do it.
      */
-    ngx_nats_seed_random();
+    if (__random_seeded == 0) {
+        ngx_nats_seed_random();
+        __random_seeded = 1;
+    }
 
     r1 = (uint32_t) ngx_random();
     r2 = (uint32_t) ngx_random();

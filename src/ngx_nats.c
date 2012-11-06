@@ -326,7 +326,11 @@ ngx_nats_core_create_conf(ngx_cycle_t *cycle)
     }
 
     nccf->name = &ngx_nats_core_conf_name;
-    nccf->pool = cycle->pool;
+    /*nccf->pool = cycle->pool;*/
+    nccf->pool = ngx_create_pool((4 * 1024), cycle->log);
+    if (nccf->pool == NULL) {
+        return NULL;
+    }
     nccf->log  = cycle->log;
 
     nccf->reconnect_interval = NGX_CONF_UNSET_MSEC;
@@ -415,16 +419,17 @@ ngx_nats_core_init_module(ngx_cycle_t *cycle)
     }
 
     rc = ngx_array_init(&nd->cd.clients, nccf->pool, 4,
-                                sizeof(ngx_nats_client_t *));
+                            sizeof(ngx_nats_client_t *));
     if (rc != NGX_OK) {
         return rc;
     }
 
-    rc = ngx_array_init(&nd->cd.subs, nccf->pool, 8,
-                                sizeof(ngx_nats_subscription_t*));
+    rc = ngx_array_init(&nd->cd.subs, nccf->pool, 16,
+                            sizeof(ngx_nats_subscription_t));
     if (rc != NGX_OK) {
         return rc;
     }
+    nd->cd.next_id = 0;
 
     nccf->data      = nd;
     nd->nccf        = nccf;
