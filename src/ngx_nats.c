@@ -703,6 +703,9 @@ ngx_nats_get_local_ip(void)
  *
  * This should be called from process init, not module init.
  */
+
+static int __random_seeded = 0;
+
 void
 ngx_nats_seed_random(void)
 {
@@ -711,6 +714,12 @@ ngx_nats_seed_random(void)
     unsigned int            pid;
     unsigned int            seed = 0;
     size_t                  i;
+
+    if (__random_seeded != 0) {
+        return;
+    }
+
+    __random_seeded = 1;
 
     ngx_time_update();
     tp = ngx_timeofday();

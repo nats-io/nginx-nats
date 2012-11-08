@@ -35,7 +35,6 @@ static void ngx_nats_free_peer(ngx_peer_connection_t *pc,
 static ngx_int_t ngx_nats_conn_err_reported = 0;
 
 ngx_nats_data_t *ngx_nats_data = NULL;
-static int __random_seeded = 0;
 
 /*---------------------------------------------------------------------------
  * Implementations.
@@ -643,7 +642,7 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
         }
     }
 
-    hm(client, &msg->subject, sid, r, 
+    hm(client, sid, &msg->subject, r, 
         (u_char *) (buf->buf + buf->pos + msg->bstart),
         (msg->bend - msg->bstart) );
 }
@@ -1452,10 +1451,7 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
      * Then I won't have to init it every time here. Performance is not
      * an issue but I still shouldn't do it.
      */
-    if (__random_seeded == 0) {
-        ngx_nats_seed_random();
-        __random_seeded = 1;
-    }
+    ngx_nats_seed_random();
 
     r1 = (uint32_t) ngx_random();
     r2 = (uint32_t) ngx_random();
