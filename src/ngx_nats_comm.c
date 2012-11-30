@@ -1109,6 +1109,14 @@ ngx_nats_connect_loop(ngx_nats_data_t *nd)
     nc->read_buf    = nd->nc_read_buf;
     nc->write_buf   = nd->nc_write_buf;
     nc->pc.log      = nccf->log;
+#if (NGX_HAVE_KQUEUE)
+    /* This prevents Nginx printing:
+     * kevent() reported about an closed connection (61: Connection refused)
+     * every time connection to NATS fails, it prints only if the error
+     * log level is set to INFO which we don't.
+     */
+    nc->pc.log_error = NGX_ERROR_INFO;
+#endif
     nc->pc.sockaddr = a->sockaddr;
     nc->pc.socklen  = a->socklen;
     nc->pc.name     = &ns->url;
