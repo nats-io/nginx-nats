@@ -439,7 +439,7 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
     log->log_level = NGX_LOG_INFO;
 
     ngx_log_error(NGX_LOG_INFO, nd->log, 0,
-        "nats: connected to NATS at '%s': version='%s'",
+        "connected to NATS at '%s': version='%s'",
         nc->server->url.data, 
         nc->srv_version->data,
         nc->srv_id->data);
