@@ -1452,19 +1452,12 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
         }
     }
 
-    /* Nginx seeds random to same value in all workers *after*
-     * it calls process_init for user modules. Then all workers
-     * get same random sequence. I need to look more into it,
-     * but generally I need my own random not depending on Nginx.
-     * Then I won't have to init it every time here. Performance is not
-     * an issue but I still shouldn't do it.
-     */
-    ngx_nats_seed_random();
+    ngx_nats_init_random();
 
-    r1 = (uint32_t) ngx_random();
-    r2 = (uint32_t) ngx_random();
-    r3 = (uint32_t) ngx_random();
-    r4 = (uint32_t) ngx_random();
+    r1 = (uint32_t) ngx_nats_next_random();
+    r2 = (uint32_t) ngx_nats_next_random();
+    r3 = (uint32_t) ngx_nats_next_random();
+    r4 = (uint32_t) ngx_nats_next_random();
 
     partA = _nats_rand4(ipvar, r1, (uint32_t)ngx_pid, (uint32_t)tp->msec);
     partB = _nats_rand4(ipvar, r2, (uint32_t)ngx_pid, (uint32_t)tp->sec);
@@ -1477,4 +1470,5 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
 
     return (ngx_int_t)(pend - buf);
 }
+
 

@@ -16,7 +16,6 @@
 
 /*
  * Major TODOs:
- *     - implement publish/subscribe interface.
  *     - process exit (shutdown NATS connection).
  *     - user/password per server.
  *
@@ -24,9 +23,7 @@
  *     - custom log.
  *     - ssl to NATS (?).
  *     - improve buffers.
- *     - use hash in JSON objects.
  */
-
 
 
 /*
@@ -457,7 +454,11 @@ ngx_nats_core_init_process(ngx_cycle_t *cycle)
 
     nccf->log = cycle->log;
 
-    ngx_nats_seed_random();
+    ngx_nats_init_random();
+
+    if (getenv("APCERA_ROUTER_TEST_RANDOM")) {
+        ngx_nats_test_random();
+    }
 
     /*
      * Returns error in case of some hard failure like no memory
@@ -694,18 +695,8 @@ ngx_nats_get_local_ip(void)
 }
 
 
-/*
- * TODO:
- * For our purposes, on UNIXes using rand() is marginally OK, but really we
- * should use something else instead. On Windows using rand() is unacceptable
- * because for historical reasons it's still from 0 to 32767 only, so useless.
- * Should use SFMT when have time.
- *
- * This should be called from process init, not module init.
- */
-
+/* deprecated
 static int __random_seeded = 0;
-
 void
 ngx_nats_seed_random(void)
 {
@@ -738,6 +729,294 @@ ngx_nats_seed_random(void)
     }
 
     srand(seed);
+}
+*/
+
+/*===========================================================================
+ * MWC Random
+ *
+ * We should not rely on the system's rand(). Why Nginx does is a mystery
+ * to me, given how much attention was paid to pretty much everything else.
+ * Some system's rand() implementation are outright super bad, some may be
+ * OK but it is simple enough to implement (not to invent :) a very good
+ * PRNG like below, so we don't need to dig into what system's PRNG does
+ * and be at its mercy. We should support a very good randomization with
+ * very good uniformity and sufficiently large period (2^32 just won't do).
+ * This is used by this module but also by other modules/logic, placed here
+ * as an API that could be used by any module.
+ *
+ * The code below implements an extremely simple, super fast and good PRNG
+ * with sufficient period (>2^60) invented by George Marsaglia.
+ *   http://www.math.uni-bielefeld.de/~sillke/ALGORITHMS/random/marsaglia-c
+ *
+ * I personally like SFMT:
+ *   http://www.math.sci.hiroshima-u.ac.jp/~m-mat/MT/SFMT/index.html
+ *
+ * However, SFMT has more complex implementation and requires at least 2 days
+ * to port to our code base and test (must test that it is 100% accurate
+ * or bad things will happen). Those are the 2 days I didn't yet have :).
+ *
+ * Meanwhile MWC is fully sufficient for the router and its only slight
+ * drawback is that it uses only 8 bytes seed while SFMT uses 16 bytes.
+ * Still, for our purposes MWC is fully enough until when we possibly 
+ * transfer to SFMT. There is a variation of MWC that is CMWC using a very
+ * log seed and with huge period but if change MWC to something else then
+ * I'd rather just switch to SFMT.
+ *==========================================================================*/
+
+static uint32_t rand_z = 362436069;
+static uint32_t rand_w = 521288629;
+static uint32_t rand_z_const = 36969;
+static uint32_t rand_w_const = 18000;
+static double   rand_d;
+static int      __ngx_nats_random_init = 0;
+
+void ngx_nats_init_random(void)
+{
+    uint32_t    i, randomizer, n;
+    
+    if (__ngx_nats_random_init != 0) {
+        return;
+    }
+
+    __ngx_nats_random_init = 1;
+
+    /*
+     * Use OpenSSL to seed the two 4-byte seeds, since we do have OpenSSL.
+     * Ideally (for the sake of purity) we would do here without OpenSSL.
+     * If we used SFMT that takes 16 bytes of seed data, we could use
+     * the nanos/ip/pid to reliably seed with data unique enough for
+     * non-secure PRNG, but it still *must* guarantee different randoms
+     * every time we start the router.
+     */
+    RAND_bytes((unsigned char *)&rand_z, sizeof(rand_z));
+    RAND_bytes((unsigned char *)&rand_w, sizeof(rand_w));
+
+    /*
+     * Need only for internal use and testing. In other cases the caller
+     * should multiply by whatever is needed, which is often not just
+     * 1/2^32 but something else, to avoid double multiplication.
+     */
+    rand_d = (double)1.0 / (double)0xffffffff;
+
+    /*
+     * Further randomize by selecting random pair of constants
+     * and then skip random number of randoms.
+     */
+    randomizer = 0;
+    RAND_bytes((unsigned char *)&randomizer, sizeof(randomizer));
+
+    n = (uint32_t)(((double)randomizer) * rand_d * (double)4.0);
+    
+    /*
+     * Values of z_const and w_const are from the post by George Marsaglia
+     * referenced above. It is crucial to use only those he listed or as
+     * he noted any pair satisfying the required property (see his post).
+     */ 
+    switch (n) {
+        case 0:
+            rand_z_const = 31083;
+            rand_w_const = 18030;
+            break;
+        case 1:
+            rand_z_const = 31059;
+            rand_w_const = 18513;
+            break;
+        case 2:
+            rand_z_const = 30714;
+            rand_w_const = 19098;
+            break;
+        case 3:
+            rand_z_const = 30345;
+            rand_w_const = 21723;
+            break;
+        default:
+            rand_z_const = 36969;
+            rand_w_const = 18000;
+            break;
+    }
+    
+    /*
+     * Skip "random" number, not sure if necessary but won't harm.
+     * "random" depends on PID only so in same router the workers,
+     * besides using different seed, will skip different No of randoms.
+     * Skip between 0 and 100,000 values. This runs at 200+ million/second.
+     */
+    n = (uint32_t)((double)randomizer * rand_d * 100000.0);
+    for (i = 0; i < n; i++) {
+        ngx_nats_next_random();        
+    }
+}
+
+/*
+ * Using variables for constants slows it down a little, OK for the router.
+ * This runs at some 100-200 MILLION times/second anyway, far faster than
+ * we need in the router.
+ */
+uint32_t ngx_nats_next_random(void)
+{
+	rand_z = rand_z_const * (rand_z & 0xffff) + (rand_z >> 16);
+	rand_w = rand_w_const * (rand_w & 0xffff) + (rand_w >> 16);
+    return  (rand_z << 16) + (rand_w & 0xffff);
+}
+
+/*===========================================================================
+ * Testing of random. So far the results are printed and must be visually
+ * checked :(. If will have time, will improve.
+ *==========================================================================*/
+
+/* 
+ * nweights must be (1 < nweights < 32), for testing only.
+ * Sum of weights must be 1.0. In real life we'll scale.
+ */
+static void
+_test_random(double *weights, int nweights, int times, int print)
+{
+    double      d, dsum, dmulti, sweights[32];
+    uint32_t    counts[32];
+    int         i, j, last;
+
+    if (print != 0) {
+        fprintf(stderr,"%d weights, %-6d times:",
+            (int)nweights, (int)times);
+    }
+
+    ngx_memset(sweights, 0, sizeof(sweights));
+    ngx_memset(counts, 0, sizeof(counts));
+
+    dsum = 0.0;
+    for (i=0; i<nweights; i++) {
+        dsum += weights[i];
+        sweights[i] = dsum;
+    }
+
+    dmulti = dsum * rand_d;
+    last = nweights - 1;
+    
+    for (i=0; i<times; i++) {
+        d = dmulti * (double)ngx_nats_next_random();
+        for (j=0; j<last; j++) {
+            if (d <= sweights[j]) {
+                break;
+            }
+        }
+        counts[j]++;        
+    }
+
+    if (print != 0) {
+        for (i=0; i<nweights; i++) {
+            fprintf(stderr, "  %.5f-%.5f",
+                weights[i], ((double)counts[i] / (double)times));
+        }
+        fprintf(stderr,"\n");
+    }
+}
+
+static int test_times[7] = { 100, 1000, 10000, 25000, 50000, 100000, 500000 };
+
+void ngx_nats_test_random(void)
+{
+    double          d, dmulti, weights[32];
+    uint32_t        counts[32];
+    int             i, j, times, nweights;
+    ngx_time_t     *tp;
+    uint64_t        tms, tme;
+
+    fprintf(stderr,"Testing random\n");
+
+    weights[0] = 0.5;
+    weights[1] = 0.5;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 2, times, 1);
+    }
+
+    weights[0] = 0.1;
+    weights[1] = 0.9;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 2, times, 1);
+    }
+
+    weights[0] = 0.1;
+    weights[1] = 0.3;
+    weights[2] = 0.6;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 3, times, 1);
+    }
+
+    weights[0] = 0.05;
+    weights[1] = 0.95;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 2, times, 1);
+    }
+
+    weights[0] = 0.001;
+    weights[1] = 0.999;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 2, times, 1);
+    }
+
+    weights[0] = 0.001;
+    weights[1] = 0.009;
+    weights[2] = 0.090;
+    weights[3] = 0.300;
+    weights[4] = 0.600;
+    for (i = 0; i < (int)(sizeof(test_times)/sizeof(int)); i++) {
+        times = test_times[i];
+        _test_random(weights, 5, times, 1);
+    }
+
+    ngx_time_update();
+    tp = ngx_timeofday();
+    tms = (uint64_t)tp->sec * (uint64_t)1000 + (uint64_t)tp->msec;
+
+    ngx_memset(counts, 0, sizeof(counts));
+
+    weights[0] = 0.001;
+    weights[1] = 0.009 + weights[0];
+    weights[2] = 0.090 + weights[1];
+    weights[3] = 0.200 + weights[2];
+    weights[4] = 0.400 + weights[3];
+    weights[5] = 0.100 + weights[4];
+    weights[6] = 0.200 + weights[5];
+    
+    nweights = 6; /* one less ! */
+
+    fprintf(stderr,"Testing performance of choosing out of %d weighted items...\n",
+            (int)(nweights+1));
+
+    dmulti = weights[nweights] * rand_d;
+
+    times = 300000000;
+    for (i=0; i<times; i++) {
+        d = dmulti * (double)ngx_nats_next_random();
+        for (j=0; j<nweights; j++) {   /* one less than values */
+            if (d <= weights[j]) {
+                break;
+            }
+        }
+        counts[j]++;
+    }
+
+    ngx_time_update();
+    tp = ngx_timeofday();
+    tme = (uint64_t)tp->sec * (uint64_t)1000 + (uint64_t)tp->msec;
+    d = ((double)times / (double)(tme-tms)) * 1000;
+    fprintf(stderr,"Time = %d millis for %d iterations\n",
+            (int)(tme-tms), (int)times);
+    fprintf(stderr,"Perf = %d times/second\n", (int)d);
+
+    fprintf(stderr,"pcs:");
+    for (i=0; i<=nweights; i++) {   /* nweights is one less already */
+        d = i == 0 ? 0.0 : weights[i-1];
+        fprintf(stderr, "  %.5f-%.5f",
+            weights[i]-d, ((double)counts[i] / (double)times));
+    }
+    fprintf(stderr,"\n");
 }
 
 

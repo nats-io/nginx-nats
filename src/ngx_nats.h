@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera Inc.
+ * Copyright 2012-2013 Apcera Inc.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev
@@ -131,7 +131,12 @@ ngx_int_t ngx_nats_create_inbox(u_char *buf, size_t bufsize);
 /* May return NULL, then we don't know local IP */
 ngx_addr_t * ngx_nats_get_local_ip(void);
 
-void ngx_nats_seed_random(void);
+/*void ngx_nats_seed_random(void); -- deprecated */
+
+
+void ngx_nats_init_random(void);
+uint32_t ngx_nats_next_random(void);
+void ngx_nats_test_random(void);
 
 
 #endif /* _NGX_NATS_H_INCLUDED_ */
