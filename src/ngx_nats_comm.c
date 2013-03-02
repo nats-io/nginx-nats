@@ -151,6 +151,7 @@ ngx_nats_buf_ensure(ngx_nats_buf_t *buf, size_t size, ngx_int_t compact)
     ngx_memcpy(bnew, buf->buf + buf->pos, n);
 
     ngx_free(buf->buf);
+
     buf->buf = bnew;
     buf->cap = ns;
 
@@ -649,215 +650,216 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
 
 
 static ngx_int_t
-ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
+_nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 {
     ngx_int_t       rc, skip;
     ngx_nats_msg_t  msg;
     u_char         *bytes;
     char           *ce;
 
-    for ( ;; ) {
+    if (buf->pos == buf->end) {
+        ngx_nats_buf_compact(buf);
+        return NGX_OK;
+    }
 
-        if (buf->pos == buf->end) {
+    bytes = (u_char *)(buf->buf + buf->pos);
+
+    rc = ngx_nats_parse(&msg, bytes, buf->end - buf->pos);
+
+    skip = rc;      /* save it */
+
+    if (rc <= 0) {
+
+        if (rc == NGX_NATS_PROTO_AGAIN) {
+
+            /* have incomplete message */
+
             ngx_nats_buf_compact(buf);
+
+            if (buf->end >= (buf->cap - 1)) {
+                    
+                /*
+                    * this means we have full buffer but it doesn't fit
+                    * one message, so need to grow the buffer.
+                    * TODO: not crucial but if it is MSG message then
+                    * we may know by how much to grow the buffer.
+                    * I don't have it now so will double the buffer,
+                    * possibly several times, but it'll happen only until
+                    * the buffer gorws enough, so is OK.
+                    */
+                    
+                if ((nc->srv_max_payload > 0 && 
+                        buf->cap >= (size_t)nc->srv_max_payload) ||
+                    (buf->cap >= NGX_NATS_MAX_MESSAGE_SIZE)) {
+
+                    /* NATS sent message larger than promised */
+                    ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                        "NATS sent message larger than max payload of %i",
+                        buf->cap);
+            
+                    ngx_nats_close_connection(nc,
+                        NGX_NATS_REASON_BAD_PROTOCOL, 1);
+
+                    return NGX_ERROR;
+                }
+
+                /* this will double the buf */
+                rc = ngx_nats_buf_ensure(buf, buf->cap - 1, 0);
+                if (rc != NGX_OK) {
+                    /* out of memory */
+                    ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                        "out of memory receiving NATS message");
+            
+                    ngx_nats_close_connection(nc,
+                        NGX_NATS_REASON_NO_MEMORY, 1);
+
+                    return NGX_ERROR;
+                }
+            }
+
             return NGX_OK;
         }
 
-        bytes = (u_char *)(buf->buf + buf->pos);
+        if (rc == NGX_NATS_PROTO_ERR_ERROR) {
 
-        rc = ngx_nats_parse(&msg, bytes, buf->end - buf->pos);
-
-        skip = rc;      /* save it */
-
-        if (rc <= 0) {
-
-            if (rc == NGX_NATS_PROTO_AGAIN) {
-
-                /* have incomplete message */
-
-                ngx_nats_buf_compact(buf);
-
-                if (buf->end == buf->cap) {
-                    
-                    /*
-                     * this means we have full buffer but it doesn't fit
-                     * one message, so need to grow the buffer.
-                     * TODO: not crucial but if it is MSG message then
-                     * we may know by how much to grow the buffer.
-                     * I don't have it now so will double the buffer,
-                     * possibly several times, but it'll happen only until
-                     * the buffer gorws enough, so is OK.
-                     */
-                    
-                    if (nc->srv_max_payload > 0 && 
-                                buf->cap >= (size_t)nc->srv_max_payload) {
-
-                        /* NATS sent message larger than promised */
-                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
-                            "NATS sent message larger than may payload of %i",
-                            nc->srv_max_payload);
-            
-                        ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
-
-                        return NGX_ERROR;
-                    }
-                    
-                    if (buf->cap >= NGX_NATS_MAX_MESSAGE_SIZE) {
-
-                        /* TODO: check max_payload mot more than 256MB? */
-
-                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
-                            "NATS sent message larger than 256MB");
-            
-                        ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
-
-                        return NGX_ERROR;
-                    }
-                    
-                    /* this will double the buf */
-                    rc = ngx_nats_buf_ensure(buf, buf->cap - 1, 0);
-                    if (rc != NGX_OK) {
-                        /* out of memory */
-                        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
-                            "out of memory receiving NATS message");
-            
-                        ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_NO_MEMORY, 1);
-
-                        return NGX_ERROR;
-                    }
-                }
-
-                return NGX_OK;
-            }
-
-            if (rc == NGX_NATS_PROTO_ERR_ERROR) {
-
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "internal error processing NATS message");
-
-            } else {
-
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "NATS at '%s' sent invalid message, error=%d",
-                    nc->server->url.data, (int)rc);
-
-            }
-                
-            ngx_nats_close_connection(nc,
-                        NGX_NATS_REASON_BAD_PROTOCOL, 1);
-
-            return NGX_ERROR;
-        }
-
-        /* handle message */
-
-        if (msg.type == NGX_NATS_MSG_OK) {
-
-            /* ignore all OKs */
-
-        }
-        else if (msg.type == NGX_NATS_MSG_ERR) {
-
-            ce = "";
-            
-            if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
-                !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
-                ce = " connect";
-            }
-
-            if (msg.bstart < msg.bend) {
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "NATS at '%s' "
-                    "returned&s error: %s",
-                    ce, nc->server->url.data, bytes+msg.bstart);
-            }
-            else {
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "NATS at '%s' "
-                    "returned&s error with no message",
-                    ce, nc->server->url.data);
-            }
-
-            if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
-                !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
-
-                ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_CONNECT_REFUSED, 1);
-
-                return NGX_ERROR;
-            }
-
-            /* TODO: what am I supposed to do about it? */
-
-        }
-        else if (msg.type == NGX_NATS_MSG_PING) {
-
-            ngx_nats_add_message(nc, "PONG\r\n", 6);
-
-        }
-        else if (msg.type == NGX_NATS_MSG_PONG) {
-
-            if ((nc->state & NGX_NATS_STATE_CONNECT_OKAYED) == 0) {
-                nc->state |= NGX_NATS_STATE_CONNECT_OKAYED;
-
-                nc->state = NGX_NATS_STATE_READY;
-
-                ngx_nats_connection_ready(nc);
-            }
-            
-            /* otherwise just ignore */
-        }
-        else if (msg.type == NGX_NATS_MSG_INFO) {
-
-            if (msg.bstart >= msg.bend) {
-                
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "NATS at '%s' sent INFO message with empty text",
-                    nc->server->url.data);
-
-                ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
-                return NGX_ERROR;
-            }
-
-            rc = ngx_nats_parse_info(nc, (char *)bytes, &msg);
-
-            if (rc != NGX_OK) {
-                
-                ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                    "NATS at '%s' sent invalid INFO message, error=%d",
-                    nc->server->url.data, (int)rc);
-                
-                ngx_nats_close_connection(nc,
-                            NGX_NATS_REASON_BAD_PROTOCOL, 1);
-                return NGX_ERROR;
-            }
-        }
-        else if (msg.type == NGX_NATS_MSG_MSG) {
-
-            ngx_nats_process_msg(nc, buf, &msg);
+            ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                "internal error processing NATS message");
 
         } else {
 
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' sent unsupported message",
-                nc->server->url.data);
+                "NATS at '%s' sent invalid message, error=%d",
+                nc->server->url.data, (int)rc);
+
+        }
+                
+        ngx_nats_close_connection(nc, NGX_NATS_REASON_BAD_PROTOCOL, 1);
+
+        return NGX_ERROR;
+    }
+
+    /* handle message */
+
+    if (msg.type == NGX_NATS_MSG_OK) {
+
+        /* ignore all OKs */
+
+    }
+    else if (msg.type == NGX_NATS_MSG_ERR) {
+
+        ce = "";
+            
+        if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
+            !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
+            ce = " connect";
+        }
+
+        if (msg.bstart < msg.bend) {
+            ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                "NATS at '%s' "
+                "returned%s error: %s",
+                nc->server->url.data, ce, bytes+msg.bstart);
+        }
+        else {
+            ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                "NATS at '%s' "
+                "returned%s error with no message",
+                nc->server->url.data, ce);
+        }
+
+        if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
+            !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
 
             ngx_nats_close_connection(nc,
-                        NGX_NATS_REASON_BAD_PROTOCOL, 1);
+                        NGX_NATS_REASON_CONNECT_REFUSED, 1);
 
             return NGX_ERROR;
         }
 
-        /* skip processed message */
+        /* TODO: what am I supposed to do about it? */
 
-        buf->pos += skip;
     }
+    else if (msg.type == NGX_NATS_MSG_PING) {
+
+        ngx_nats_add_message(nc, "PONG\r\n", 6);
+
+    }
+    else if (msg.type == NGX_NATS_MSG_PONG) {
+
+        if ((nc->state & NGX_NATS_STATE_CONNECT_OKAYED) == 0) {
+            nc->state |= NGX_NATS_STATE_CONNECT_OKAYED;
+
+            nc->state = NGX_NATS_STATE_READY;
+
+            ngx_nats_connection_ready(nc);
+        }
+            
+        /* otherwise just ignore */
+    }
+    else if (msg.type == NGX_NATS_MSG_INFO) {
+
+        if (msg.bstart >= msg.bend) {
+                
+            ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                "NATS at '%s' sent INFO message with empty text",
+                nc->server->url.data);
+
+            ngx_nats_close_connection(nc,
+                        NGX_NATS_REASON_BAD_PROTOCOL, 1);
+            return NGX_ERROR;
+        }
+
+        rc = ngx_nats_parse_info(nc, (char *)bytes, &msg);
+
+        if (rc != NGX_OK) {
+                
+            ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+                "NATS at '%s' sent invalid INFO message, error=%d",
+                nc->server->url.data, (int)rc);
+                
+            ngx_nats_close_connection(nc,
+                        NGX_NATS_REASON_BAD_PROTOCOL, 1);
+            return NGX_ERROR;
+        }
+    }
+    else if (msg.type == NGX_NATS_MSG_MSG) {
+
+        ngx_nats_process_msg(nc, buf, &msg);
+
+    } else {
+
+        ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
+            "NATS at '%s' sent unsupported message",
+            nc->server->url.data);
+
+        ngx_nats_close_connection(nc,
+                    NGX_NATS_REASON_BAD_PROTOCOL, 1);
+
+        return NGX_ERROR;
+    }
+
+    return skip;
 }
 
+
+static ngx_int_t
+ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
+{
+    ngx_int_t   rc;
+
+    for ( ;; ) {
+
+        rc = _nats_process_buffer_msg(nc, buf);
+        
+        /* Return if rc is NGX_OK or any error */
+        if (rc <= 0) {
+            return rc;
+        }
+
+        /* Otherwise skip processed message and continue */
+        buf->pos += rc;
+    }
+}
 
 static void
 ngx_nats_read_from_nats(ngx_connection_t *c)
