@@ -560,7 +560,7 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
     struct ifaddrs     *ifa_ip6 = NULL;
     struct ifaddrs     *store_ifa = NULL;
     char               *store_host = NULL;
-    size_t              store_socklen;
+    size_t              store_socklen = 0;
     ngx_int_t           lev;
 
     ifaddrs = NULL;
@@ -573,8 +573,8 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
 
     host_ip4[0] = 0;
     host_ip6[0] = 0;
-        
-    for (ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) { 
+
+    for (ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
 
         if (ifa->ifa_addr == NULL)
             continue;
@@ -589,10 +589,10 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
 
         if (family != AF_INET && family != AF_INET6)
             continue;
-        
+
         if (family == AF_INET) {
             if (ifa_ip4 == NULL) {
-                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in), 
+                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
                         host_ip4, sizeof(host_ip4), NULL, 0, NI_NUMERICHOST);
                 if (rc != 0) {
                     ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
@@ -603,7 +603,7 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
             }
         } else {        /* AF_INET6 */
             if (ifa_ip6 == NULL) {
-                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in6), 
+                rc = getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in6),
                         host_ip6, sizeof(host_ip6), NULL, 0, NI_NUMERICHOST);
                 if (rc != 0) {
                     ngx_log_error(NGX_LOG_ALERT, cycle->log, ngx_errno,
@@ -660,15 +660,15 @@ ngx_nats_init_local_ip(ngx_cycle_t *cycle)
         }
 
         _ngx_nats_local_ip->name.len = ngx_strlen(store_host);
-        _ngx_nats_local_ip->name.data = ngx_pnalloc(cycle->pool, 
+        _ngx_nats_local_ip->name.data = ngx_pnalloc(cycle->pool,
                             _ngx_nats_local_ip->name.len + 1);
         if (_ngx_nats_local_ip->name.data == NULL) {
             goto fail;
         }
 
-        ngx_memcpy(_ngx_nats_local_ip->sockaddr, store_ifa->ifa_addr, 
+        ngx_memcpy(_ngx_nats_local_ip->sockaddr, store_ifa->ifa_addr,
                     _ngx_nats_local_ip->socklen);
-        ngx_memcpy(_ngx_nats_local_ip->name.data, store_host, 
+        ngx_memcpy(_ngx_nats_local_ip->name.data, store_host,
                     ngx_strlen(store_host) + 1);
 
         goto end;
@@ -722,7 +722,7 @@ ngx_nats_seed_random(void)
     seed = (seed * 31) + tp->msec;
 
     if (local_ip != NULL) {
-        
+
         for (i = 0; i < local_ip->name.len; i++) {
             seed = (seed * 31) + (unsigned int)local_ip->name.data[i];
         }
@@ -758,7 +758,7 @@ ngx_nats_seed_random(void)
  *
  * Meanwhile MWC is fully sufficient for the router and its only slight
  * drawback is that it uses only 8 bytes seed while SFMT uses 16 bytes.
- * Still, for our purposes MWC is fully enough until when we possibly 
+ * Still, for our purposes MWC is fully enough until when we possibly
  * transfer to SFMT. There is a variation of MWC that is CMWC using a very
  * log seed and with huge period but if change MWC to something else then
  * I'd rather just switch to SFMT.
@@ -774,7 +774,7 @@ static int      __ngx_nats_random_init = 0;
 void ngx_nats_init_random(void)
 {
     uint32_t    i, randomizer, n;
-    
+
     if (__ngx_nats_random_init != 0) {
         return;
     }
@@ -807,12 +807,12 @@ void ngx_nats_init_random(void)
     RAND_bytes((unsigned char *)&randomizer, sizeof(randomizer));
 
     n = (uint32_t)(((double)randomizer) * rand_d * (double)4.0);
-    
+
     /*
      * Values of z_const and w_const are from the post by George Marsaglia
      * referenced above. It is crucial to use only those he listed or as
      * he noted any pair satisfying the required property (see his post).
-     */ 
+     */
     switch (n) {
         case 0:
             rand_z_const = 31083;
@@ -835,7 +835,7 @@ void ngx_nats_init_random(void)
             rand_w_const = 18000;
             break;
     }
-    
+
     /*
      * Skip "random" number, not sure if necessary but won't harm.
      * "random" depends on PID only so in same router the workers,
@@ -844,7 +844,7 @@ void ngx_nats_init_random(void)
      */
     n = (uint32_t)((double)randomizer * rand_d * 100000.0);
     for (i = 0; i < n; i++) {
-        ngx_nats_next_random();        
+        ngx_nats_next_random();
     }
 }
 
@@ -865,7 +865,7 @@ uint32_t ngx_nats_next_random(void)
  * checked :(. If will have time, will improve.
  *==========================================================================*/
 
-/* 
+/*
  * nweights must be (1 < nweights < 32), for testing only.
  * Sum of weights must be 1.0. In real life we'll scale.
  */
@@ -892,7 +892,7 @@ _test_random(double *weights, int nweights, int times, int print)
 
     dmulti = dsum * rand_d;
     last = nweights - 1;
-    
+
     for (i=0; i<times; i++) {
         d = dmulti * (double)ngx_nats_next_random();
         for (j=0; j<last; j++) {
@@ -900,7 +900,7 @@ _test_random(double *weights, int nweights, int times, int print)
                 break;
             }
         }
-        counts[j]++;        
+        counts[j]++;
     }
 
     if (print != 0) {
@@ -983,7 +983,7 @@ void ngx_nats_test_random(void)
     weights[4] = 0.400 + weights[3];
     weights[5] = 0.100 + weights[4];
     weights[6] = 0.200 + weights[5];
-    
+
     nweights = 6; /* one less ! */
 
     fprintf(stderr,"Testing performance of choosing out of %d weighted items...\n",
@@ -1018,5 +1018,3 @@ void ngx_nats_test_random(void)
     }
     fprintf(stderr,"\n");
 }
-
-
