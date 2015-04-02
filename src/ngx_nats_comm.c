@@ -103,7 +103,7 @@ ngx_int_t
 ngx_nats_buf_ensure(ngx_nats_buf_t *buf, size_t size, ngx_int_t compact)
 {
     size_t  n, tail, ns, nt;
-    char   *bnew;
+    u_char *bnew;
 
     if (buf->pos == buf->end && buf->pos != 0) {
         buf->pos = 0;
@@ -279,7 +279,7 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
          * so a poison pill message, or we're out of memory, do not put
          * us into a tight connection loop.
          */
-        
+
         if (reason == NGX_NATS_REASON_DISCONNECTED || immediate) {
 
             /* this reconnects immediately */
@@ -368,7 +368,7 @@ ngx_nats_flush(ngx_nats_connection_t *nc)
             buf->end = 0;
 
             if (ngx_handle_write_event(c->write, 0) != NGX_OK) {
-                ngx_nats_close_connection(nc, 
+                ngx_nats_close_connection(nc,
                             NGX_NATS_REASON_INTERNAL_ERROR, 1);
                 return;
             }
@@ -435,13 +435,13 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
     ngx_nats_conn_err_reported = 0;
 
     /* force logging this regardless of log level */
-    
+
     n = log->log_level;
     log->log_level = NGX_LOG_INFO;
 
     ngx_log_error(NGX_LOG_INFO, nd->log, 0,
         "connected to NATS at '%s': version='%s'",
-        nc->server->url.data, 
+        nc->server->url.data,
         nc->srv_version->data,
         nc->srv_id->data);
 
@@ -461,7 +461,7 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
 
 
 static ngx_int_t
-ngx_nats_parse_info(ngx_nats_connection_t *nc, char *bytes,
+ngx_nats_parse_info(ngx_nats_connection_t *nc, ngx_str_t *bytes,
                 ngx_nats_msg_t *msg)
 {
     ngx_nats_json_value_t      *json;
@@ -469,15 +469,9 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, char *bytes,
     ngx_nats_json_object_t     *info;
     ngx_int_t                   rc, n, i;
     u_char                     *name;
+    ngx_str_t                   msg_str = { msg->bend - msg->bstart, bytes->data + msg->bstart };
 
-    json = ngx_pcalloc(nc->pool, sizeof(ngx_nats_json_value_t));     
-    if (json == NULL) {
-        return NGX_ERROR;
-    }
-    
-    rc = ngx_nats_json_parse(nc->pool, json, (char *)(bytes + msg->bstart),
-                        (size_t)(msg->bend - msg->bstart));
-
+    rc = ngx_nats_json_parse(nc->pool, &msg_str, &json);
     if (rc < 0 || json->type != NGX_NATS_JSON_OBJECT) {
         return NGX_ERROR;
     }
@@ -495,7 +489,7 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, char *bytes,
                 return NGX_ERROR;
             }
             nc->srv_id = f->value.value.vstr;   /* in pool */
-        } 
+        }
         else if (ngx_strcasecmp(name, (u_char *)"host") == 0) {
             if (f->value.type != NGX_NATS_JSON_STRING) {
                 return NGX_ERROR;
@@ -561,7 +555,7 @@ ngx_nats_get_subscription(ngx_nats_connection_t *nc, ngx_int_t sid)
         if (sub->sid == sid)
             return sub;
     }
-    
+
     return NULL;
 }
 
@@ -583,7 +577,7 @@ ngx_nats_add_subscription(ngx_nats_connection_t *nc, ngx_int_t sid)
     if (sub == NULL) {
         return NULL;
     }
-    
+
     sub->sid = sid;
     return sub;
 }
@@ -617,9 +611,12 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
 {
     ngx_nats_subscription_t    *sub;
     ngx_nats_handle_msg_pt      hm;
+    void                       *sub_data;
     ngx_nats_client_t          *client;
     ngx_str_t                  *r = NULL;
     ngx_int_t                   sid;
+    ngx_pool_t                 *pool;
+    ngx_nats_message_t         *m;
 
     sid  = msg->sid;
 
@@ -634,6 +631,7 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
 
     /* we may remove subscription so cache these */
     hm = sub->handle_msg;
+    sub_data = sub->client_subscription_data;
     client = sub->client;
 
     if (sub->max > 0) {
@@ -643,9 +641,33 @@ ngx_nats_process_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf,
         }
     }
 
-    hm(client, sid, &msg->subject, r, 
-        (u_char *) (buf->buf + buf->pos + msg->bstart),
-        (msg->bend - msg->bstart) );
+    pool = ngx_create_pool(NGX_DEFAULT_POOL_SIZE, nc->nd->log);
+    if (pool == NULL) {
+        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                "%s: ngx_create_pool failed", __func__);
+        return;
+    }
+
+    m = ngx_pcalloc(pool, sizeof(ngx_nats_message_t));
+    if (m == NULL) {
+        ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
+                "%s: ngx_pcalloc failed", __func__);
+        goto DONE;
+    }
+
+    m->client                   = client;
+    m->sid                      = sid;
+    m->subject                  = &msg->subject;
+    m->replyto                  = r;
+    m->pool                     = pool;
+    m->client_subscription_data = sub_data;
+    m->data.data                = (u_char *) (buf->buf + buf->pos + msg->bstart);
+    m->data.len                 = msg->bend - msg->bstart;
+
+    hm(m);
+
+DONE:
+    ngx_destroy_pool(pool);
 }
 
 
@@ -654,7 +676,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 {
     ngx_int_t       rc, skip;
     ngx_nats_msg_t  msg;
-    u_char         *bytes;
+    ngx_str_t       bytes;
     char           *ce;
 
     if (buf->pos == buf->end) {
@@ -662,9 +684,9 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         return NGX_OK;
     }
 
-    bytes = (u_char *)(buf->buf + buf->pos);
-
-    rc = ngx_nats_parse(&msg, bytes, buf->end - buf->pos);
+    bytes.data = buf->buf + buf->pos;
+    bytes.len = buf->end - buf->pos;
+    rc = ngx_nats_parse(&bytes, &msg);
 
     skip = rc;      /* save it */
 
@@ -677,7 +699,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
             ngx_nats_buf_compact(buf);
 
             if (buf->end >= (buf->cap - 1)) {
-                    
+
                 /*
                     * this means we have full buffer but it doesn't fit
                     * one message, so need to grow the buffer.
@@ -687,8 +709,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                     * possibly several times, but it'll happen only until
                     * the buffer gorws enough, so is OK.
                     */
-                    
-                if ((nc->srv_max_payload > 0 && 
+
+                if ((nc->srv_max_payload > 0 &&
                         buf->cap >= (size_t)nc->srv_max_payload) ||
                     (buf->cap >= NGX_NATS_MAX_MESSAGE_SIZE)) {
 
@@ -696,7 +718,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                     ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
                         "NATS sent message larger than max payload of %i",
                         buf->cap);
-            
+
                     ngx_nats_close_connection(nc,
                         NGX_NATS_REASON_BAD_PROTOCOL, 1);
 
@@ -709,7 +731,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                     /* out of memory */
                     ngx_log_error(NGX_LOG_CRIT, nc->nd->log, 0,
                         "out of memory receiving NATS message");
-            
+
                     ngx_nats_close_connection(nc,
                         NGX_NATS_REASON_NO_MEMORY, 1);
 
@@ -732,7 +754,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
                 nc->server->url.data, (int)rc);
 
         }
-                
+
         ngx_nats_close_connection(nc, NGX_NATS_REASON_BAD_PROTOCOL, 1);
 
         return NGX_ERROR;
@@ -748,7 +770,7 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
     else if (msg.type == NGX_NATS_MSG_ERR) {
 
         ce = "";
-            
+
         if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
             !(nc->state & NGX_NATS_STATE_CONNECT_OKAYED)) {
             ce = " connect";
@@ -757,8 +779,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         if (msg.bstart < msg.bend) {
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
                 "NATS at '%s' "
-                "returned%s error: %s",
-                nc->server->url.data, ce, bytes+msg.bstart);
+                "returned%s error: %V",
+                nc->server->url.data, ce, &bytes);
         }
         else {
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
@@ -793,13 +815,13 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 
             ngx_nats_connection_ready(nc);
         }
-            
+
         /* otherwise just ignore */
     }
     else if (msg.type == NGX_NATS_MSG_INFO) {
 
         if (msg.bstart >= msg.bend) {
-                
+
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
                 "NATS at '%s' sent INFO message with empty text",
                 nc->server->url.data);
@@ -809,14 +831,14 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
             return NGX_ERROR;
         }
 
-        rc = ngx_nats_parse_info(nc, (char *)bytes, &msg);
+        rc = ngx_nats_parse_info(nc, &bytes, &msg);
 
         if (rc != NGX_OK) {
-                
+
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
                 "NATS at '%s' sent invalid INFO message, error=%d",
                 nc->server->url.data, (int)rc);
-                
+
             ngx_nats_close_connection(nc,
                         NGX_NATS_REASON_BAD_PROTOCOL, 1);
             return NGX_ERROR;
@@ -850,7 +872,7 @@ ngx_nats_process_buffer(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
     for ( ;; ) {
 
         rc = _nats_process_buffer_msg(nc, buf);
-        
+
         /* Return if rc is NGX_OK or any error */
         if (rc <= 0) {
             return rc;
@@ -906,7 +928,7 @@ ngx_nats_read_from_nats(ngx_connection_t *c)
         }
     }
 
-    /* 
+    /*
      * Processing could add messages into write buffer.
      */
     if (wlen < (wbuf->end - wbuf->pos)) {
@@ -938,7 +960,7 @@ static void
 ngx_nats_read_event_handler(ngx_connection_t *c)
 {
     ngx_nats_connection_t   *nc = c->data;
-    
+
     if (c->read->timedout) {
         ngx_nats_close_connection(nc, NGX_NATS_REASON_READ_TIMEOUT, 1);
         return;
@@ -1144,7 +1166,7 @@ ngx_nats_connect_loop(ngx_nats_data_t *nd)
         c->read->handler    = ngx_nats_connection_handler;
 
         c->log              = nd->log;
-        
+
         c->read->log        = c->log;
         c->write->log       = c->log;
         /* TODO: do I need SSL? c->pool is for SSL only. */
@@ -1198,10 +1220,10 @@ ngx_nats_init(ngx_nats_core_conf_t *nccf)
     nd = (ngx_nats_data_t *) nccf->data;
 
     ngx_nats_data = nd;
-    
+
     nd->log = nccf->log;
 
-    /* 
+    /*
      * Try to connect to any NATS in the list.
      * If fails it'll setup the retry timer, etc.
      */
@@ -1317,7 +1339,8 @@ ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
 
 ngx_int_t
 ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
-                ngx_int_t max, ngx_nats_handle_msg_pt handle_msg)
+        ngx_int_t max, ngx_nats_handle_msg_pt handle_msg,
+        void *client_subscription_data)
 {
     ngx_nats_data_t            *nd = ngx_nats_data;
     ngx_nats_connection_t      *nc;
@@ -1349,11 +1372,12 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
         return NGX_ERROR;
     }
 
-    sub->client     = client;
-    sub->handle_msg = handle_msg;
-    sub->sid        = sid;
-    sub->max        = max;
-    sub->recv       = 0;  
+    sub->client                     = client;
+    sub->handle_msg                 = handle_msg;
+    sub->client_subscription_data   = client_subscription_data;
+    sub->sid                        = sid;
+    sub->max                        = max;
+    sub->recv                       = 0;
 
     /* no queue support for now... */
     p = ngx_sprintf(header, "SUB %s %ui\r\n", subject->data, sid);
@@ -1388,7 +1412,7 @@ ngx_nats_unsubscribe(ngx_nats_client_t *client, ngx_int_t sid)
     if (sid == 0) {
         return NGX_DECLINED;
     }
-    
+
     if (nd == NULL) {
         return NGX_ABORT;   /* nats not defined in the config */
     }
@@ -1421,7 +1445,7 @@ ngx_nats_unsubscribe(ngx_nats_client_t *client, ngx_int_t sid)
 
 
 static uint32_t
-_nats_rand4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) 
+_nats_rand4(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
     return ((((a * 31) + b) * 31) + c) * 31 + d;
 }
@@ -1447,7 +1471,7 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
     local_ip = ngx_nats_get_local_ip();
 
     ipvar = 0;
-    
+
     if (local_ip != NULL) {
         for (i = 0; i < local_ip->name.len; i++) {
             ipvar = (ipvar * 31) + (uint32_t)local_ip->name.data[i];
@@ -1465,7 +1489,7 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
     partB = _nats_rand4(ipvar, r2, (uint32_t)ngx_pid, (uint32_t)tp->sec);
     partC = _nats_rand4(ipvar, r3, (uint32_t)tp->sec, (uint32_t)tp->msec);
     partD = (uint32_t) (r4 & 0x00ff);   /* 1 byte only */
-    
+
     pend = ngx_sprintf(buf, "_INBOX.%08xD%08xD%08xD%02xD", partA, partB, partC, partD);
 
     *pend = 0;

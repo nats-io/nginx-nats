@@ -45,7 +45,7 @@ typedef struct {
      * The readable/sendable portion of the buffer is between
      * pos and end, 0<=pos<=end<=cap. "cap" is allocated length.
      */
-    char           *buf;
+    u_char         *buf;
     size_t          pos;
     size_t          end;
     size_t          cap;
@@ -85,6 +85,7 @@ typedef struct {
 
     ngx_nats_client_t      *client;
     ngx_nats_handle_msg_pt  handle_msg;
+    void                   *client_subscription_data;
     ngx_int_t               sid;
     ngx_int_t               max;
     ngx_int_t               recv;

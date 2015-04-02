@@ -71,7 +71,7 @@ typedef struct {
     /* From configuration or defaults */
 
     ngx_array_t            *servers;    /* of ngx_nats_server_t elements    */
-    
+
     ngx_msec_t              reconnect_interval;     /* millis */
     ngx_msec_t              ping_interval;          /* millis */
 
@@ -98,14 +98,23 @@ void ngx_nats_exit(ngx_nats_core_conf_t * nccf);
 /*
  * Public client interface.
  */
-
 typedef struct ngx_nats_client_s ngx_nats_client_t;
+
+struct ngx_nats_message_s {
+    ngx_pool_t         *pool;
+    ngx_nats_client_t  *client;
+    ngx_int_t           sid;
+    ngx_str_t          *subject;
+    ngx_str_t          *replyto;
+    ngx_str_t          data;
+    void               *client_subscription_data;
+};
+
+typedef struct ngx_nats_message_s ngx_nats_message_t;
 
 typedef void (*ngx_nats_connected_pt)(ngx_nats_client_t *client);
 typedef void (*ngx_nats_disconnected_pt)(ngx_nats_client_t *client);
-typedef void (*ngx_nats_handle_msg_pt)(ngx_nats_client_t *client,
-            ngx_int_t sid, ngx_str_t *subject, ngx_str_t *replyto,
-            u_char *data, size_t len);
+typedef void (*ngx_nats_handle_msg_pt)(ngx_nats_message_t *m);
 
 struct ngx_nats_client_s {
 
@@ -122,7 +131,8 @@ ngx_int_t ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
             ngx_str_t *replyto, u_char *data, ngx_uint_t len);
 
 ngx_int_t ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
-            ngx_int_t max, ngx_nats_handle_msg_pt handle_msg);
+            ngx_int_t max, ngx_nats_handle_msg_pt handle_msg,
+            void *client_subscription_data);
 
 ngx_int_t ngx_nats_unsubscribe(ngx_nats_client_t *client, ngx_int_t sid);
 

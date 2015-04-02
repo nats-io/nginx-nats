@@ -30,6 +30,8 @@
 #define NGX_NATS_MSG_MSG        (6)
 
 
+// TODO: combine ngx_nats_msg_t and ngx_nats_message_t, no reason to have 2
+//   is len == bend - bstart?
 typedef struct {
 
     ngx_int_t       type;
@@ -55,8 +57,7 @@ typedef struct {
 char* ngx_nats_protocol_msg_name(ngx_int_t type);
 
 /* See comments in ngx_nats_protocol.c for meaning of return value. */
-ngx_int_t ngx_nats_parse(ngx_nats_msg_t *msg, u_char* s, size_t len);
-
+ngx_int_t ngx_nats_parse(ngx_str_t *bytes, ngx_nats_msg_t *msg);
 
 #endif /* _NGX_NATS_PROTOCOL_H_INCLUDED_ */
 

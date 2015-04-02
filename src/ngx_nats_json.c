@@ -19,12 +19,12 @@ typedef struct
 {
     ngx_pool_t     *pool;
 
-    char           *text;           /* JSON string                          */
+    u_char         *text;           /* JSON string                          */
     size_t          len;            /* length of string in "s"              */
     size_t          pos;            /* current parse position               */
     size_t          istart;         /* start position of the item we parse  */
 
-    char*           str;            /* for parsing string values            */
+    u_char         *str;            /* for parsing string values            */
     size_t          str_cap;        /* allocated size (capacity)            */
     size_t          str_pos;
 
@@ -34,7 +34,7 @@ typedef struct
 
 
 /*---------------------------------------------------------------------------
- * Forward declarations. 
+ * Forward declarations.
  *--------------------------------------------------------------------------*/
 
 static ngx_int_t ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
@@ -42,7 +42,7 @@ static ngx_int_t ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
 static ngx_int_t ngx_nats_json_parse_array(ngx_nats_json_parse_ctx_t *pc,
                     ngx_nats_json_array_t *a);
 static ngx_int_t ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
-                    ngx_str_t *s, char q);
+                    ngx_str_t *s, u_char q);
 static ngx_int_t ngx_nats_json_parse_hex(ngx_nats_json_parse_ctx_t *pc,
                     ngx_nats_json_value_t *v);
 static ngx_int_t ngx_nats_json_parse_double(ngx_nats_json_parse_ctx_t *pc,
@@ -54,13 +54,13 @@ static ngx_int_t ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
 
 
 /*---------------------------------------------------------------------------
- * Implementations. 
+ * Implementations.
  *--------------------------------------------------------------------------*/
 
 const u_char *
 ngx_nats_json_type_name(ngx_int_t type)
 {
-    switch(type) 
+    switch(type)
     {
     case NGX_NATS_JSON_NULL:        return (u_char *)"Null";
     case NGX_NATS_JSON_OBJECT:      return (u_char *)"Object";
@@ -77,15 +77,15 @@ ngx_nats_json_type_name(ngx_int_t type)
 static ngx_int_t
 _skipSpaces(ngx_nats_json_parse_ctx_t *pc)
 {
-    char       *t;
+    u_char     *t;
     size_t      p;
     size_t      m = pc->len;
-    
+
     t = pc->text;
     pc->istart = -1;
 
     for (p = pc->pos; p < m; p++) {
-        char c = t[p];
+        u_char c = t[p];
         if (c != ' ' && c != '\r' && c != '\n' && c != '\t') {
             pc->pos = p;
             return 0;
@@ -103,18 +103,18 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
     /* pc->pos is right after '{' */
 
     ngx_nats_json_field_t  *f;
-    char                   *t;
+    u_char                 *t;
     ngx_int_t               rc;
     size_t                  psave = 0;
-    char                    c, need_field=0;
+    u_char                  c, need_field=0;
 
     t = pc->text;
     pc->istart = pc->pos - 1;
 
     while(pc->pos < pc->len) {
-        
+
         psave = pc->pos;
-        
+
         rc = _skipSpaces(pc);
         if (rc != 0) {
             pc->err_pos = psave;
@@ -131,7 +131,7 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
             }
             return 0;
         }
-               
+
 
         /* must have field name in quotes */
         if (c != '\'' && c != '\"') {
@@ -144,7 +144,7 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
             return NGX_NATS_JSON_ERR_ERROR;
         }
         ngx_memzero(f, sizeof(ngx_nats_json_field_t));
-        
+
         rc = ngx_nats_json_parse_string(pc, &f->name, c);
         if (rc != 0) {
             return rc;
@@ -154,9 +154,9 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
             pc->err_pos = pc->pos - 1;
             return NGX_NATS_JSON_ERR_SYNTAX;
         }
-        
+
         psave = pc->pos;
-        
+
         rc = _skipSpaces(pc);
         if (rc != 0) {
             pc->err_pos = psave;
@@ -176,13 +176,13 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
         }
 
         psave = pc->pos;
-        
+
         rc = _skipSpaces(pc);
         if (rc != 0) {
             pc->err_pos = psave;
             return NGX_NATS_JSON_ERR_EOF;
         }
-        
+
         psave = pc->pos;
 
         c = t[pc->pos++];
@@ -193,9 +193,9 @@ ngx_nats_json_parse_object(ngx_nats_json_parse_ctx_t *pc,
             need_field = 1;
             continue;
         }
-        
+
         pc->err_pos = psave;
-        return NGX_NATS_JSON_ERR_SYNTAX; 
+        return NGX_NATS_JSON_ERR_SYNTAX;
     }
 
     pc->err_pos = psave;
@@ -210,10 +210,10 @@ ngx_nats_json_parse_array(ngx_nats_json_parse_ctx_t *pc,
     /* pc->pos is right after '[' */
 
     ngx_nats_json_value_t  *v;
-    char                   *t;
+    u_char                 *t;
     ngx_int_t               rc;
     size_t                  psave;
-    char                    c, need_field;
+    u_char                  c, need_field;
 
     t = pc->text;
     pc->istart = pc->pos - 1;
@@ -222,7 +222,7 @@ ngx_nats_json_parse_array(ngx_nats_json_parse_ctx_t *pc,
     need_field = 0;
 
     while(pc->pos < pc->len) {
-        
+
         psave = pc->pos;
         rc = _skipSpaces(pc);
         if (rc != 0) {
@@ -241,26 +241,26 @@ ngx_nats_json_parse_array(ngx_nats_json_parse_ctx_t *pc,
             pc->pos++;
             return 0;
         }
-               
+
         v = (ngx_nats_json_value_t *) ngx_array_push(a->values);
         if (v == NULL) {
             return NGX_NATS_JSON_ERR_ERROR;
         }
         ngx_memzero(v, sizeof(ngx_nats_json_value_t));
-        
+
         rc = ngx_nats_json_parse_value(pc, v);
         if (rc != 0) {
             return rc;
         }
 
         psave = pc->pos;
-        
+
         rc = _skipSpaces(pc);
         if (rc != 0) {
             pc->err_pos = psave;
             return NGX_NATS_JSON_ERR_EOF;
         }
-        
+
         psave = pc->pos;
 
         c = t[pc->pos++];
@@ -271,27 +271,27 @@ ngx_nats_json_parse_array(ngx_nats_json_parse_ctx_t *pc,
             need_field = 1;
             continue;
         }
-        
+
         pc->err_pos = psave;
-        return NGX_NATS_JSON_ERR_SYNTAX; 
+        return NGX_NATS_JSON_ERR_SYNTAX;
     }
 
     pc->err_pos = psave;
     return NGX_NATS_JSON_ERR_EOF;
 }
 
-/* 
+/*
  * Called only with n=2 or n=1 maybe, never too large so 2*cap
  * is always sufficient expansion because we start with 1024.
  */
 static ngx_int_t
 ngx_nats_json_ensure_str(ngx_nats_json_parse_ctx_t *pc, size_t n)
 {
-    char   *ns;
+    u_char *ns;
     size_t  sz = pc->str_cap - pc->str_pos; /* available bytes */
 
     if (sz < n) {
-        
+
         /*
          * Limit string length, if single string value wants to be
          * more than 1MB then something is wrong.
@@ -300,7 +300,7 @@ ngx_nats_json_ensure_str(ngx_nats_json_parse_ctx_t *pc, size_t n)
             /* TODO: log JSON string value too large */
             return NGX_NATS_JSON_ERR_ERROR;
         }
-        
+
         sz = pc->str_cap * 2;
 
         ns = ngx_pnalloc(pc->pool, sz);
@@ -308,11 +308,11 @@ ngx_nats_json_ensure_str(ngx_nats_json_parse_ctx_t *pc, size_t n)
             /* ngx_pnalloc did log out of memory... */
             return NGX_NATS_JSON_ERR_ERROR;
         }
-        
+
         ngx_memcpy(ns, pc->str, pc->str_pos);
-        
+
         ngx_pfree(pc->pool, pc->str);
-        
+
         pc->str     = ns;
         pc->str_cap = sz;
     }
@@ -323,28 +323,28 @@ ngx_nats_json_ensure_str(ngx_nats_json_parse_ctx_t *pc, size_t n)
 
 static ngx_int_t
 ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
-                ngx_str_t *s, char q)
+                ngx_str_t *s, u_char q)
 {
     /* pc->pos is right after the first quote (I allow ' or ") */
 
-    char       *p;
-    char       *t;
+    u_char     *p;
+    u_char     *t;
     size_t      n, max, nout, mspos;
     u_char      quote_found = 0;
-    char        c;
+    u_char      c;
 
     t = pc->text;
     pc->istart = pc->pos - 1;
 
     n     = pc->pos;
     max   = pc->len;
-    p     = (char *) (t + pc->pos);     /* after " */
+    p     = t + pc->pos;     /* after " */
     mspos = pc->str_cap - 2;
 
     nout  = 0;
 
     while(n < max) {
-    
+
         pc->str_pos = nout;
 
         if (pc->str_pos >= mspos) {
@@ -356,17 +356,17 @@ ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
 
         c = *p++;
         n++;
-        
+
         if (c == '\\') {
-            
+
             if (n >= max) {
                 pc->err_pos = pc->istart;
-                return NGX_NATS_JSON_ERR_EOF;                
+                return NGX_NATS_JSON_ERR_EOF;
             }
-            
+
             c = *p++;
             n++;
-            
+
             switch (c) {
 
                 case 'b':   pc->str[nout++] = '\b';   break;
@@ -374,24 +374,24 @@ ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
                 case 'n':   pc->str[nout++] = '\n';   break;
                 case 'f':   pc->str[nout++] = '\f';   break;
                 case 'r':   pc->str[nout++] = '\r';   break;
-                
+
                 case '\"':
                 case '\'':
                 case '\\':
                 case '/':   pc->str[nout++] = c;      break;
-                    
+
                 case 'u':
                     pc->err_pos = n - 2;
                     return NGX_NATS_JSON_ERR_NOT_SUPPORTED;
-                    
-                default:    
+
+                default:
                     pc->err_pos = n - 2;
                     return NGX_NATS_JSON_ERR_SYNTAX;
             }
 
             continue;
         }
-            
+
         if (c == q)
         {
             quote_found = 1;
@@ -407,7 +407,7 @@ ngx_nats_json_parse_string(ngx_nats_json_parse_ctx_t *pc,
         pc->err_pos = pc->istart;
         return NGX_NATS_JSON_ERR_EOF;
     }
-    
+
     /* +1 for trailing 0, "nout" does not count it. */
     s->data = ngx_pnalloc(pc->pool, nout + 1);
     if (s->data == NULL) {
@@ -431,28 +431,28 @@ ngx_nats_json_parse_hex(ngx_nats_json_parse_ctx_t *pc,
 
     size_t      ilen = pc->pos - pc->istart;
     uint64_t    u64;
-    char       *p;
-    char       *end;
-    char        c;
+    u_char     *p;
+    u_char     *end;
+    u_char      c;
 
     pc->err_pos = pc->istart;
 
     /* skip "0x" that was already found */
-    
-    p       = (char*) (pc->text + pc->istart + 2);
-    end     = (char*) (pc->text + pc->pos);
+
+    p       = pc->text + pc->istart + 2;
+    end     = pc->text + pc->pos;
     ilen   -= 2;
 
     if (ilen > 16) {
         return NGX_NATS_JSON_ERR_SYNTAX;
     }
-    
+
     u64 = 0;
 
     while(p < end) {
-        
+
         c = *p++;
-        
+
         if (c >= '0' && c <= '9') {
             u64 = (u64 << 4) + (c-'0');
         }
@@ -483,11 +483,11 @@ ngx_nats_json_parse_int(ngx_nats_json_parse_ctx_t *pc,
 
     size_t      ilen;
     uint64_t    u64;
-    char       *p;
-    char       *end;
+    u_char     *p;
+    u_char     *end;
     u_char      neg = 0;
-    char        c;
-    
+    u_char      c;
+
     /*
      * pre-set this, if we return OK then it doesn't matter,
      * in all other cases we'll point to start of the number.
@@ -495,9 +495,9 @@ ngx_nats_json_parse_int(ngx_nats_json_parse_ctx_t *pc,
     pc->err_pos = pc->istart;
 
     ilen = pc->pos - pc->istart;
-    p    = (char*) (pc->text + pc->istart);
-    end  = (char*) (pc->text + pc->pos);
-    
+    p    = pc->text + pc->istart;
+    end  = pc->text + pc->pos;
+
     if ((*p) == '-')
     {
         neg = 1;
@@ -522,7 +522,7 @@ ngx_nats_json_parse_int(ngx_nats_json_parse_ctx_t *pc,
         if (u64 > 922337203685477580LL) {
             return NGX_NATS_JSON_ERR_SYNTAX;
         }
-        
+
         u64 = (u64 * 10) + (c - '0');
     }
 
@@ -541,7 +541,7 @@ ngx_nats_json_parse_int(ngx_nats_json_parse_ctx_t *pc,
         }
         v->value.vint = (int64_t) u64;
     }
-        
+
     return 0;
 }
 
@@ -553,10 +553,10 @@ ngx_nats_json_parse_double(ngx_nats_json_parse_ctx_t *pc,
     /* pc->istart is at the start of number text, pc->pos is right after */
 
     double  d;
-    char   *p;
-    char   *endptr = NULL;
+    u_char *p;
+    u_char *endptr = NULL;
     size_t  ilen = pc->pos - pc->istart;
-    char    temp[32];
+    u_char  temp[32];
 
     if (ilen > 31) {
         pc->err_pos = pc->istart;
@@ -564,11 +564,11 @@ ngx_nats_json_parse_double(ngx_nats_json_parse_ctx_t *pc,
     }
 
     p = &temp[0];
-    
+
     ngx_memcpy(p, pc->text + pc->istart, ilen);
     p[ilen] = 0;
 
-    d = strtod(p, &endptr);
+    d = strtod((char *)p, (char **)&endptr);
 
     if (endptr != (p+ilen)) {
         pc->err_pos = pc->istart + (size_t)(endptr - p);
@@ -586,18 +586,18 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
                 ngx_nats_json_value_t *v)
 {
     ngx_int_t   rc;
-    char        c, c2;
+    u_char      c, c2;
     size_t      ilen, n;
-    char       *p;
-    char       *t;
+    u_char     *p;
+    u_char     *t;
 
     t = pc->text;
-    
+
     rc = _skipSpaces(pc);
     if (rc != 0) {
         return rc;
     }
-    
+
     c = t[pc->pos];
 
     if (c == '{') {
@@ -634,7 +634,7 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
         if (v->value.varr->values == NULL) {
             return NGX_NATS_JSON_ERR_ERROR;
         }
-        
+
         return ngx_nats_json_parse_array(pc, v->value.varr);
     }
 
@@ -657,9 +657,9 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
     while(pc->pos < pc->len) {
 
         c = t[pc->pos];
-        
+
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
-            c == ',' || c == ':' || 
+            c == ',' || c == ':' ||
             c == '[' || c == ']' || c == '{' || c == '}') {
             break;
         }
@@ -668,25 +668,25 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
     }
 
     ilen = pc->pos - pc->istart;                /* length of item text */
-    p    = (char*)(t + pc->istart);
+    p    = t + pc->istart;
 
     /* TODO: I don't support NaN for now, should I? */
 
     if (ilen == 4) {
-        
-        if (ngx_strncasecmp((u_char *)p, (u_char *)"null", 4) == 0) {
+
+        if (ngx_strncasecmp(p, (u_char *)"null", 4) == 0) {
             v->type = NGX_NATS_JSON_NULL;
             return 0;
         }
-        
-        if (ngx_strncasecmp((u_char *)p, (u_char *)"true", 4) == 0) {
+
+        if (ngx_strncasecmp(p, (u_char *)"true", 4) == 0) {
             v->type = NGX_NATS_JSON_BOOLEAN;
             v->value.vint = 1;
             return 0;
         }
     }
-    else if (ilen == 5 && 
-             (ngx_strncasecmp((u_char *)p, (u_char *)"false", 5)) == 0) {
+    else if (ilen == 5 &&
+             (ngx_strncasecmp(p, (u_char *)"false", 5)) == 0) {
         v->type = NGX_NATS_JSON_BOOLEAN;
         v->value.vint = 0;
         return 0;
@@ -698,7 +698,7 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
      */
 
     c = t[pc->istart];
-    
+
     /* Check first character is a valid number start. */
     if ((c < '0' || c > '9') && c != '.' && c != '+' && c != '-') {
         pc->err_pos = pc->istart;
@@ -706,7 +706,7 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
     }
 
     if (c == '0') {
-        
+
         if (ilen == 1) {
             v->type = NGX_NATS_JSON_INTEGER;
             v->value.vint = 0;
@@ -744,26 +744,33 @@ ngx_nats_json_parse_value(ngx_nats_json_parse_ctx_t *pc,
  * "json" may be allocated in that same pool.
  */
 ngx_int_t
-ngx_nats_json_parse(ngx_pool_t *pool, ngx_nats_json_value_t *json,
-                char *s, size_t len)
+ngx_nats_json_parse(
+        ngx_pool_t *pool,
+        ngx_str_t *bytes,
+        ngx_nats_json_value_t **json)
 {
+    ngx_nats_json_value_t      *js;
     ngx_nats_json_parse_ctx_t   pc;
     ngx_int_t                   rc;
 
-    ngx_memzero(json, sizeof(ngx_nats_json_value_t));
-    ngx_memzero(&pc, sizeof(ngx_nats_json_parse_ctx_t));
-
-    /* Empty JSON string is not valid, caller shouldn't call then. */
-
-    if (len < 1) {
+    if (bytes->len < 1) {
         /* TODO: log JSON error with full string and the error pos */
         return NGX_NATS_JSON_ERR_SYNTAX;
     }
 
+    js = ngx_pcalloc(pool, sizeof(ngx_nats_json_value_t));
+    if (js == NULL) {
+        return NGX_ERROR;
+    }
+
+    ngx_memzero(&pc, sizeof(ngx_nats_json_parse_ctx_t));
+
+    /* Empty JSON string is not valid, caller shouldn't call then. */
+
     pc.pool     = pool;
-    pc.text     = s;
-    pc.len      = len;
-    
+    pc.text     = bytes->data;
+    pc.len      = bytes->len;
+
     pc.str_cap  = 1024;                     /* will grow if need */
     pc.str = ngx_pnalloc(pool, pc.str_cap); /* non-aligned pool alloc */
     if (pc.str == NULL) {
@@ -772,13 +779,14 @@ ngx_nats_json_parse(ngx_pool_t *pool, ngx_nats_json_value_t *json,
 
     pc.err_pos = -1;
 
-    rc = ngx_nats_json_parse_value(&pc, json);
+    rc = ngx_nats_json_parse_value(&pc, js);
 
     if (rc != 0) {
         /* TODO: log JSON error with full string and the error pos */
         return rc;
     }
 
+    *json = js;
     return pc.pos;  /* count of parsed bytes */
 }
 
@@ -792,7 +800,7 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
     ngx_uint_t              n, lim;
     ngx_nats_json_value_t  *v2;
     ngx_nats_json_field_t  *f;
-    char                    numbuf[28];
+    u_char                  numbuf[28];
     int                     pos;
 
     switch(v->type)
@@ -803,7 +811,7 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
 
         case NGX_NATS_JSON_BOOLEAN:
             fprintf(stderr,"%s",
-                (char *)(v->value.vint == 0 ? "false" : "true"));
+                (v->value.vint == 0 ? "false" : "true"));
             return;
 
         case NGX_NATS_JSON_INTEGER:
@@ -816,9 +824,9 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
             numbuf[sizeof(numbuf)-1] = 0;
             pos = sizeof(numbuf)-1;
             do {
-                numbuf[--pos] = (char)(u64 % 10 + '0');
+                numbuf[--pos] = u64 % 10 + '0';
             } while (u64 /= 10);
-            fprintf(stderr,"%s",((char*)numbuf) + pos);
+            fprintf(stderr,"%s",numbuf + pos);
             return;
 
         case NGX_NATS_JSON_DOUBLE:
@@ -840,7 +848,7 @@ _json_debug_print_value(ngx_nats_json_value_t *v)
                 if (n < lim-1) {
                     fprintf(stderr,",");
                 }
-                f++;                
+                f++;
             }
             fprintf(stderr,"}");
             return;

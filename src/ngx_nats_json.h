@@ -34,7 +34,7 @@
 typedef struct {
 
     /* TODO: use ngx_hash_t when have time to figure it out? */
-    
+
     ngx_array_t    *fields;     /* of ngx_nats_json_field */
 
 } ngx_nats_json_object_t;
@@ -48,9 +48,9 @@ typedef struct {
 
 
 typedef struct {
-    
+
     ngx_int_t   type;
-    
+
     union {
         ngx_nats_json_object_t *vobj;
         ngx_nats_json_array_t  *varr;
@@ -70,7 +70,7 @@ typedef struct {
 } ngx_nats_json_field_t;
 
 
-/* 
+/*
  * If returns < 0 then it's an error code.
  * If returns > 0 then parsing was successful and return value is the number
  * of parsed bytes, which may be less than the value of "len" param.
@@ -79,11 +79,9 @@ typedef struct {
  * must check the type if it only expects an object or array, etc.
  *
  * Parsed objects/arrays/values are allocated in a provided pool.
- * Often the caller resets the pool before calling this so same pool
- * is reused.
  */
-ngx_int_t ngx_nats_json_parse(ngx_pool_t *pool, ngx_nats_json_value_t *json,
-                    char *s, size_t len);
+ngx_int_t ngx_nats_json_parse(
+        ngx_pool_t *pool, ngx_str_t *bytes, ngx_nats_json_value_t **json);
 
 const u_char * ngx_nats_json_type_name(ngx_int_t type);
 

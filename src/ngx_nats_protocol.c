@@ -24,18 +24,24 @@
  *           was closed because of protocol violation.
  */
 
-static ngx_int_t ngx_nats_parse_ok(ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
-static ngx_int_t ngx_nats_parse_err(ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
-static ngx_int_t ngx_nats_parse_ping(ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
-static ngx_int_t ngx_nats_parse_pong(ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
-static ngx_int_t ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
-static ngx_int_t ngx_nats_parse_msg (ngx_nats_msg_t *m, size_t hlen,
-                    u_char* s, size_t len);
+static ngx_int_t
+ngx_nats_parse_ok(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
+static ngx_int_t
+ngx_nats_parse_err(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
+static ngx_int_t
+ngx_nats_parse_ping(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
+static ngx_int_t
+ngx_nats_parse_pong(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
+static ngx_int_t
+ngx_nats_parse_info(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
+static ngx_int_t
+ngx_nats_parse_msg (
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m);
 
 
 #define _NATS_PARSE_ERR ((size_t)-1)
@@ -84,10 +90,10 @@ static size_t
 _nats_token(u_char *s, size_t pos, size_t max, size_t *ns, size_t *ne)
 {
     char q = 0;
-    
+
     *ns = max;
     *ne = max;
-    
+
     /* skip spaces */
     for ( ; pos < max && s[pos] == ' '; pos++);
     if (pos == max) {
@@ -118,16 +124,16 @@ _nats_token(u_char *s, size_t pos, size_t max, size_t *ns, size_t *ne)
     }
 
     for ( ; pos < max && s[pos] != ' ' && s[pos] != '\r'; pos++);
-    
+
     *ne = pos;
     return pos;
 }
 
 
 ngx_int_t
-ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
+ngx_nats_parse(ngx_str_t *bytes, ngx_nats_msg_t *m)
 {
-    size_t      p, hlen;
+    size_t      p, header_len;
 
     ngx_memzero(m, sizeof(ngx_nats_msg_t));
 
@@ -136,18 +142,18 @@ ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
      * May not have enough bytes to even parse the header.
      */
 
-    for (p = 0; p < len; p++) {
+    for (p = 0; p < bytes->len; p++) {
 
-        if (s[p] == '\n') {
+        if (bytes->data[p] == '\n') {
             return NGX_NATS_PROTO_ERR_INVALID_HEADER;
         }
 
-        if (s[p] == ' ' || s[p] == '\r') {
+        if (bytes->data[p] == ' ' || bytes->data[p] == '\r') {
             break;
         }
     }
 
-    if (p >= len) {
+    if (p >= bytes->len) {
 
         /*
          * TODO: return error if no complete header in first 4096 bytes.
@@ -157,16 +163,16 @@ ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    hlen = p;        /* header length */
+    header_len = p;        /* header length */
 
     if (p == 3) {
 
-        if (ngx_strncasecmp(s, (u_char *) "+OK", 3) == 0) {
-            return ngx_nats_parse_ok(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "+OK", 3) == 0) {
+            return ngx_nats_parse_ok(bytes, header_len, m);
         }
 
-        if (ngx_strncasecmp(s, (u_char *) "MSG", 3) == 0) {
-            return ngx_nats_parse_msg(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "MSG", 3) == 0) {
+            return ngx_nats_parse_msg(bytes, header_len, m);
         }
 
         return NGX_NATS_PROTO_ERR_INVALID_HEADER;
@@ -174,20 +180,20 @@ ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
 
     if (p == 4) {
 
-        if (ngx_strncasecmp(s, (u_char *) "-ERR", 4) == 0) {
-            return ngx_nats_parse_err(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "-ERR", 4) == 0) {
+            return ngx_nats_parse_err(bytes, header_len, m);
         }
 
-        if (ngx_strncasecmp(s, (u_char *) "PING", 4) == 0) {
-            return ngx_nats_parse_ping(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "PING", 4) == 0) {
+            return ngx_nats_parse_ping(bytes, header_len, m);
         }
 
-        if (ngx_strncasecmp(s, (u_char *) "PONG", 4) == 0) {
-            return ngx_nats_parse_pong(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "PONG", 4) == 0) {
+            return ngx_nats_parse_pong(bytes, header_len, m);
         }
 
-        if (ngx_strncasecmp(s, (u_char *) "INFO", 4) == 0) {
-            return ngx_nats_parse_info(m, hlen, s, len);
+        if (ngx_strncasecmp(bytes->data, (u_char *) "INFO", 4) == 0) {
+            return ngx_nats_parse_info(bytes, header_len, m);
         }
 
         return NGX_NATS_PROTO_ERR_INVALID_HEADER;
@@ -200,7 +206,8 @@ ngx_nats_parse(ngx_nats_msg_t *m, u_char* s, size_t len)
 
 
 ngx_int_t
-ngx_nats_parse_ok(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_ok(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "+OK\r\n"
@@ -208,19 +215,19 @@ ngx_nats_parse_ok(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_OK;
 
-    if (len < 4) {
+    if (bytes->len < 4) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[3] != '\r') {
+    if (bytes->data[3] != '\r') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    if (len < 5) {
+    if (bytes->len < 5) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[4] != '\n') {
+    if (bytes->data[4] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
@@ -229,7 +236,8 @@ ngx_nats_parse_ok(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
 
 ngx_int_t
-ngx_nats_parse_ping(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_ping(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "PING\r\n"
@@ -237,19 +245,19 @@ ngx_nats_parse_ping(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_PING;
 
-    if (len < 5) {
+    if (bytes->len < 5) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[4] != '\r') {
+    if (bytes->data[4] != '\r') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    if (len < 6) {
+    if (bytes->len < 6) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[5] != '\n') {
+    if (bytes->data[5] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
@@ -258,7 +266,8 @@ ngx_nats_parse_ping(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
 
 ngx_int_t
-ngx_nats_parse_pong(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_pong(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "PONG\r\n"
@@ -266,19 +275,19 @@ ngx_nats_parse_pong(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_PONG;
 
-    if (len < 5) {
+    if (bytes->len < 5) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[4] != '\r') {
+    if (bytes->data[4] != '\r') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    if (len < 6) {
+    if (bytes->len < 6) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[5] != '\n') {
+    if (bytes->data[5] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
@@ -287,7 +296,8 @@ ngx_nats_parse_pong(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
 
 ngx_int_t
-ngx_nats_parse_err(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_err(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "-ERR error-text\r\n".
@@ -299,56 +309,57 @@ ngx_nats_parse_err(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_ERR;
 
-    for (n = hlen; n < len && s[n] == ' '; n++);
+    for (n = header_len; n < bytes->len && bytes->data[n] == ' '; n++);
 
-    if (n >= len) {
+    if (n >= bytes->len) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (n == hlen) {
+    if (n == header_len) {
 
         /* Must be \r\n, if possible that NATS sends -ERR with no message */
-        if (s[n] != '\r') {
+        if (bytes->data[n] != '\r') {
             return NGX_NATS_PROTO_ERR_INVALID_MSG;
         }
 
-        if (n == len - 1) {
+        if (n == bytes->len - 1) {
             return NGX_NATS_PROTO_AGAIN;
         }
 
-        if (s[n+1] != '\n') {
+        if (bytes->data[n+1] != '\n') {
             return NGX_NATS_PROTO_ERR_INVALID_MSG;
         }
 
-        m->bstart = hlen;
-        m->bend   = hlen;
-        s[m->bend] = 0;
+        m->bstart = header_len;
+        m->bend   = header_len;
+        bytes->data[m->bend] = 0;
 
         return (ngx_int_t)(n + 2);
     }
 
     m->bstart = n;      /* first non-space char after -ERR */
 
-    for (n++; n < len && s[n] != '\r'; n++);
+    for (n++; n < bytes->len && bytes->data[n] != '\r'; n++);
 
     /* Means we didn't find or found as very last available char */
-    if (n >= len-1) {
+    if (n >= bytes->len-1) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[n+1] != '\n') {
+    if (bytes->data[n+1] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     m->bend = n;
-    s[m->bend] = 0;
+    bytes->data[m->bend] = 0;
 
     return (ngx_int_t)(n + 2);
 }
 
 
 ngx_int_t
-ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_info(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "INFO {...fields...}\r\n"
@@ -360,31 +371,31 @@ ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_INFO;
 
-    for (n = hlen; n < len && s[n] == ' '; n++);
+    for (n = header_len; n < bytes->len && bytes->data[n] == ' '; n++);
 
-    if (n >= len) {
+    if (n >= bytes->len) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (n == hlen) {     /* no space(s) after INFO */
+    if (n == header_len) {     /* no space(s) after INFO */
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     m->bstart = n;      /* first non-space char after INFO */
 
-    for (n++; n < len && s[n] != '\r'; n++);
+    for (n++; n < bytes->len && bytes->data[n] != '\r'; n++);
 
     /* Means we didn't find or found as very last available char */
-    if (n >= len-1) {
+    if (n >= bytes->len-1) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[n+1] != '\n') {
+    if (bytes->data[n+1] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     m->bend = n;
-    s[m->bend] = 0;
+    bytes->data[m->bend] = 0;
 
     return (ngx_int_t)(n + 2);
 }
@@ -392,7 +403,8 @@ ngx_nats_parse_info(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
 
 ngx_int_t
-ngx_nats_parse_msg(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
+ngx_nats_parse_msg(
+        ngx_str_t *bytes, size_t header_len, ngx_nats_msg_t *m)
 {
     /*
      * "MSG Subject Sid [reply-to] Len\r\n...payload...\r\n".
@@ -407,78 +419,78 @@ ngx_nats_parse_msg(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
 
     m->type = NGX_NATS_MSG_MSG;
 
-    if (s[hlen] != ' ') {
+    if (bytes->data[header_len] != ' ') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
-    for (n = hlen; n < len-1 && s[n] != '\r'; n++);
-    if (n >= len-1) {
+    for (n = header_len; n < bytes->len-1 && bytes->data[n] != '\r'; n++);
+    if (n >= bytes->len-1) {
         return NGX_NATS_PROTO_AGAIN;
     }
-    if (s[n+1] != '\n') {
+    if (bytes->data[n+1] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     /* have full header */
     max = n;
 
-    n = hlen;
+    n = header_len;
 
     /* get subject */
-    n = _nats_token(s, n, max, &ns, &ne);
+    n = _nats_token(bytes->data, n, max, &ns, &ne);
     if (n == _NATS_PARSE_ERR || n == max || ns >= ne) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
-    m->subject.data = (u_char *)(s + ns);
+    m->subject.data = (u_char *)(bytes->data + ns);
     m->subject.len  = ne - ns;
 
     /* get Sid */
-    n = _nats_token(s, n, max, &ns, &ne);
+    n = _nats_token(bytes->data, n, max, &ns, &ne);
     if (n == _NATS_PARSE_ERR || n == max || ns >= ne) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
-    rc = _nats_atoi((u_char *)(s + ns), ne - ns, &m->sid);
+    rc = _nats_atoi((u_char *)(bytes->data + ns), ne - ns, &m->sid);
     if (rc != NGX_OK) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     /* get next one or two tokens */
-    n = _nats_token(s, n, max, &ns, &ne);
+    n = _nats_token(bytes->data, n, max, &ns, &ne);
    if (n == _NATS_PARSE_ERR || ns >= ne) {     /* may be last token */
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     if (n < max) { /* may have one more token */
-        n = _nats_token(s, n, max, &ns2, &ne2);
+        n = _nats_token(bytes->data, n, max, &ns2, &ne2);
         if (n == _NATS_PARSE_ERR) {
             return NGX_NATS_PROTO_ERR_INVALID_MSG;
         }
         if (ns2 < ne2) {
             /* have token */
-            m->replyto.data = (u_char *)(s + ns);
+            m->replyto.data = (u_char *)(bytes->data + ns);
             m->replyto.len  = ne - ns;
             ns = ns2;
             ne = ne2;
         }
         /* check no more tokens */
-        n = _nats_token(s, n, max, &ns2, &ne2);
+        n = _nats_token(bytes->data, n, max, &ns2, &ne2);
         if (n == _NATS_PARSE_ERR || n < max || ns2 < ne2) {
             return NGX_NATS_PROTO_ERR_INVALID_MSG;
         }
     }
 
-    rc = _nats_atoi((u_char *)(s + ns), ne - ns, &m->len);
+    rc = _nats_atoi((u_char *)(bytes->data + ns), ne - ns, &m->len);
     if (rc != NGX_OK) {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
     ns = max + 2;   /* start of payload */
 
-    if ((ns + m->len + 2) > len) {
+    if ((ns + m->len + 2) > bytes->len) {
         return NGX_NATS_PROTO_AGAIN;
     }
 
-    if (s[ns + m->len] != '\r' || s[ns + m->len + 1] != '\n') {
+    if (bytes->data[ns + m->len] != '\r' || bytes->data[ns + m->len + 1] != '\n') {
         return NGX_NATS_PROTO_ERR_INVALID_MSG;
     }
 
@@ -491,7 +503,7 @@ ngx_nats_parse_msg(ngx_nats_msg_t *m, size_t hlen, u_char* s, size_t len)
         m->replyto.data[m->replyto.len] = 0;
     }
 
-    s[m->bend] = 0;
+    bytes->data[m->bend] = 0;
 
     return (ngx_int_t) (ns + m->len + 2);
 }
