@@ -1,11 +1,7 @@
 nginx-nats
 ==========
 
-Nginx module that implements NATS client.
-
-The current implementation is designed to be correct and to handle low rates
-of NATS.  Comments suggest that Kirill felt some rewrites would be necessary
-if we wanted to use NATS messages in the serving loop.
+Nginx module that implements the NATS client.
 
 ### Configuration:
 
