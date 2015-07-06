@@ -298,12 +298,23 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
 static void
 ngx_nats_ping_handler(ngx_event_t *ev)
 {
+    // ngx_nats_ping_handler is invoked only by the timer, OR on when nginx
+    // does ngx_event_cancel_timers, e.g. when processing SIGHUP. We only want
+    // it to act when invoked normally, from a timer
+    if (!ev->timer_set) {
+        return;
+    }
+
     ngx_nats_connection_t *nc = ev->data;
 
     ngx_nats_add_message(nc, "PING\r\n", 6);
     ngx_nats_flush(nc);
 
     ngx_add_timer(&nc->ping_timer, nc->nd->nccf->ping_interval);
+
+    // make sure this timer can be canceled immediately when worker processes
+    // exit gracefully
+    nc->ping_timer.cancelable = 1;
 }
 
 
@@ -329,6 +340,10 @@ ngx_nats_check_connected(ngx_nats_connection_t *nc)
         nc->ping_timer.data    = nc;
 
         ngx_add_timer(&nc->ping_timer, nc->nd->nccf->ping_interval);
+
+        // make sure this timer can be canceled immediately when worker
+        // processes exit gracefully
+        nc->ping_timer.cancelable = 1;
     }
 
     ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
@@ -1020,6 +1035,10 @@ ngx_nats_add_reconnect_timer(ngx_nats_data_t * nd)
 
         nd->curr_index = -1;
         ngx_add_timer(&nd->reconnect_timer, nd->nccf->reconnect_interval);
+
+        // make sure this timer can be canceled immediately when worker
+        // processes exit gracefully
+        nd->reconnect_timer.cancelable = 1;
     }
 }
 
