@@ -541,6 +541,12 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, ngx_str_t *bytes,
             }
             nc->srv_max_payload = (ngx_int_t)f->value.value.vint;
         }
+        else if (ngx_strcasecmp(name, (u_char *)"go") == 0) {
+            if (f->value.type != NGX_NATS_JSON_STRING) {
+                return NGX_ERROR;
+            }
+            nc->go_version = f->value.value.vstr;   /* in pool */
+        }
         else {
             return NGX_ERROR;
         }
