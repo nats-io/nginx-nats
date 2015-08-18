@@ -547,9 +547,6 @@ ngx_nats_parse_info(ngx_nats_connection_t *nc, ngx_str_t *bytes,
             }
             nc->go_version = f->value.value.vstr;   /* in pool */
         }
-        else {
-            return NGX_ERROR;
-        }
     }
 
     return NGX_OK;
