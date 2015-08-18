@@ -1072,7 +1072,7 @@ ngx_nats_connection_init(ngx_nats_connection_t *nc)
 
     p = ngx_sprintf(connstr,
             "CONNECT {\"verbose\":false,\"pedantic\":false,"
-            "\"user\":\"%V\",\"pass\":\"%V\"}\r\nPING\r\n",
+            "\"user\":\"%V\",\"pass\":\"%V\",\"lang\":\"c-nginx\"}\r\nPING\r\n",
             &nc->nd->nccf->user, &nc->nd->nccf->password);
 
     if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) == 0) {
