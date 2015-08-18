@@ -71,6 +71,7 @@ typedef struct {
     ngx_str_t              *srv_host;
     ngx_int_t               srv_port;
     ngx_str_t              *srv_version;
+    ngx_str_t              *go_version;
     ngx_int_t               srv_max_payload;
     unsigned                srv_auth_required:1;
     unsigned                srv_ssl_required:1;
