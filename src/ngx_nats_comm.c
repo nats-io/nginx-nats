@@ -234,14 +234,14 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
         immediate = 1;
 
         ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
-            "cannot connect to NATS at '%s'",
-            nc->server->url.data);
+            "cannot connect to NATS at '%V'",
+            &nc->server->url);
 
     } else if (nc->state == NGX_NATS_STATE_READY) {
 
         ngx_log_error(NGX_LOG_WARN, nc->nd->log, 0,
-            "disconnected from NATS at '%s'",
-            nc->server->url.data);
+            "disconnected from NATS at '%V'",
+            &nc->server->url);
 
         /* Call disconnected in clients */
 
@@ -347,8 +347,8 @@ ngx_nats_check_connected(ngx_nats_connection_t *nc)
     }
 
     ngx_log_error(NGX_LOG_DEBUG, nc->nd->log, 0,
-        "connect() to NATS at '%s' succeeded",
-        nc->server->url.data);
+        "connect() to NATS at '%V' succeeded",
+        &nc->server->url);
 }
 
 
@@ -455,10 +455,9 @@ ngx_nats_connection_ready(ngx_nats_connection_t *nc)
     log->log_level = NGX_LOG_INFO;
 
     ngx_log_error(NGX_LOG_INFO, nd->log, 0,
-        "connected to NATS at '%s': version='%s'",
-        nc->server->url.data,
-        nc->srv_version->data,
-        nc->srv_id->data);
+        "connected to NATS at '%V': version='%V'",
+        &nc->server->url,
+        nc->srv_version);
 
     log->log_level = n;     /* restore log level */
 
@@ -768,8 +767,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         } else {
 
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' sent invalid message, error=%d",
-                nc->server->url.data, (int)rc);
+                "NATS at '%V' sent invalid message, error=%d",
+                &nc->server->url, (int)rc);
 
         }
 
@@ -796,15 +795,15 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
 
         if (msg.bstart < msg.bend) {
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' "
+                "NATS at '%V' "
                 "returned%s error: %V",
-                nc->server->url.data, ce, &bytes);
+                &nc->server->url, ce, &bytes);
         }
         else {
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' "
+                "NATS at '%V' "
                 "returned%s error with no message",
-                nc->server->url.data, ce);
+                &nc->server->url, ce);
         }
 
         if ((nc->state & NGX_NATS_STATE_CONNECT_SENT) &&
@@ -841,8 +840,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         if (msg.bstart >= msg.bend) {
 
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' sent INFO message with empty text",
-                nc->server->url.data);
+                "NATS at '%V' sent INFO message with empty text",
+                &nc->server->url);
 
             ngx_nats_close_connection(nc,
                         NGX_NATS_REASON_BAD_PROTOCOL, 1);
@@ -854,8 +853,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
         if (rc != NGX_OK) {
 
             ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-                "NATS at '%s' sent invalid INFO message, error=%d",
-                nc->server->url.data, (int)rc);
+                "NATS at '%V' sent invalid INFO message, error=%d",
+                &nc->server->url, (int)rc);
 
             ngx_nats_close_connection(nc,
                         NGX_NATS_REASON_BAD_PROTOCOL, 1);
@@ -869,8 +868,8 @@ _nats_process_buffer_msg(ngx_nats_connection_t *nc, ngx_nats_buf_t *buf)
     } else {
 
         ngx_log_error(NGX_LOG_ERR, nc->nd->log, 0,
-            "NATS at '%s' sent unsupported message",
-            nc->server->url.data);
+            "NATS at '%V' sent unsupported message",
+            &nc->server->url);
 
         ngx_nats_close_connection(nc,
                     NGX_NATS_REASON_BAD_PROTOCOL, 1);
@@ -1067,7 +1066,7 @@ ngx_nats_connection_init(ngx_nats_connection_t *nc)
     u_char  connstr[NGX_NATS_MAS_USER_PASS_LEN + 128];
     u_char *p;
 
-    p = ngx_sprintf(connstr,
+    p = ngx_snprintf(connstr, sizeof(connstr),
             "CONNECT {\"verbose\":false,\"pedantic\":false,"
             "\"user\":\"%V\",\"pass\":\"%V\",\"lang\":\"c-nginx\"}\r\nPING\r\n",
             &nc->nd->nccf->user, &nc->nd->nccf->password);
@@ -1322,20 +1321,24 @@ ngx_nats_publish(ngx_nats_client_t *client, ngx_str_t *subject,
         return NGX_ERROR;       /* not connected    */
     }
 
+    if (subject == NULL) {
+        return NGX_ERROR;
+    }
+
     if (replyto != NULL) {
         if (subject->len + replyto->len > 512) {
             return NGX_DECLINED;
         }
-        p = ngx_sprintf(header,
-                "PUB %s %s %ui\r\n",
-                subject->data, replyto->data, len);
+        p = ngx_snprintf(header, sizeof(header),
+                "PUB %V %V %ui\r\n",
+                subject, replyto, len);
     } else {
         if (subject->len > 512) {
             return NGX_DECLINED;
         }
-        p = ngx_sprintf(header,
-                "PUB %s %ui\r\n",
-                subject->data, len);
+        p = ngx_snprintf(header, sizeof(header),
+                "PUB %V %ui\r\n",
+                subject, len);
     }
 
     rc = ngx_nats_add_message(nc, (char*)header, (p - header));
@@ -1402,14 +1405,14 @@ ngx_nats_subscribe(ngx_nats_client_t *client, ngx_str_t *subject,
     sub->recv                       = 0;
 
     /* no queue support for now... */
-    p = ngx_sprintf(header, "SUB %s %ui\r\n", subject->data, sid);
+    p = ngx_snprintf(header, sizeof(header), "SUB %V %ui\r\n", subject, sid);
     rc = ngx_nats_add_message(nc, (char*)header, (p - header));
     if (rc != NGX_OK) {
         return rc;
     }
 
     if (max > 0) {
-        p = ngx_sprintf(header, "UNSUB %ui %ui\r\n",  sid, max);
+        p = ngx_snprintf(header, sizeof(header), "UNSUB %ui %ui\r\n", sid, max);
         rc = ngx_nats_add_message(nc, (char*)header, (p - header));
         if (rc != NGX_OK) {
             return rc;
@@ -1454,7 +1457,7 @@ ngx_nats_unsubscribe(ngx_nats_client_t *client, ngx_int_t sid)
         return NGX_DECLINED;
     }
 
-    p = ngx_sprintf(header, "UNSUB %ui\r\n",  sid);
+    p = ngx_snprintf(header, sizeof(header), "UNSUB %ui\r\n",  sid);
     rc = ngx_nats_add_message(nc, (char*)header, (p - header));
     if (rc != NGX_OK) {
         return rc;
@@ -1512,7 +1515,7 @@ ngx_nats_create_inbox(u_char *buf, size_t bufsize)
     partC = _nats_rand4(ipvar, r3, (uint32_t)tp->sec, (uint32_t)tp->msec);
     partD = (uint32_t) (r4 & 0x00ff);   /* 1 byte only */
 
-    pend = ngx_sprintf(buf, "_INBOX.%08xD%08xD%08xD%02xD", partA, partB, partC, partD);
+    pend = ngx_snprintf(buf, bufsize, "_INBOX.%08xD%08xD%08xD%02xD", partA, partB, partC, partD);
 
     *pend = 0;
 
