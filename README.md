@@ -117,3 +117,9 @@ JSON structure types: `ngx_nats_json_object_t`, `ngx_nats_json_array_t`,
   types, using the provided allocation pool
 * `ngx_nats_json_type_name()`: convert an `NGX_NATS_JSON_*` type constant into
   a string name
+
+### Examples
+
+Below you can find examples of using `nginx-nats`:
+
+- [nats-pub](examples/nats-pub) example
