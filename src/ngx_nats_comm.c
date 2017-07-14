@@ -298,9 +298,6 @@ ngx_nats_close_connection(ngx_nats_connection_t *nc, ngx_int_t reason,
 static void
 ngx_nats_ping_handler(ngx_event_t *ev)
 {
-    // ngx_nats_ping_handler is invoked only by the timer, OR on when nginx
-    // does ngx_event_cancel_timers, e.g. when processing SIGHUP. We only want
-    // it to act when invoked normally, from a timer
     if (!ev->timer_set) {
         return;
     }
@@ -996,6 +993,12 @@ static void
 ngx_nats_connection_handler(ngx_event_t *ev)
 {
     ngx_connection_t   *c = ev->data;
+    ngx_nats_connection_t *nc = c->data;
+
+    if (ngx_exiting && nc != NULL) {
+        ngx_nats_close_connection(nc, NGX_NATS_REASON_SHUTTING_DOWN, 0);
+        return;
+    }
 
     if (ev->write) {
         ngx_nats_write_event_handler(c);

@@ -18,6 +18,7 @@
 #define NGX_NATS_REASON_WRITE_TIMEOUT   (4) /* writing into NATS timed out  */
 #define NGX_NATS_REASON_BAD_PROTOCOL    (5) /* NATS sent msg I cant parse   */
 #define NGX_NATS_REASON_DISCONNECTED    (6) /* NATS disconnected            */
+#define NGX_NATS_REASON_SHUTTING_DOWN   (7) /* nginx process is shutting down */
 #define NGX_NATS_REASON_NO_MEMORY       (98)
 #define NGX_NATS_REASON_INTERNAL_ERROR  (99)
 
