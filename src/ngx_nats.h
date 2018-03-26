@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2013 Apcera Inc.
+ * Copyright 2012-2018 The NATS Authors.
  *
  * Based on Nginx source code:
  *              Copyright (C) Igor Sysoev

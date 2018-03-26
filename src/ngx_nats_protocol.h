@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Apcera Inc.
+ * Copyright (C) The NATS Authors.
  *
  */
 
