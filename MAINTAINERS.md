@@ -1,12 +1,8 @@
+# Maintainers
 
+Maintainership is on a per project basis.
 
-
-
-reviewers:
-- ColinSullivan1
-- wallyqs
-- derekcollison
-approvers:
-- ColinSullivan1
-- wallyqs
-- derekcollison
+### Core-maintainers
+  - Colin Sullivan <colin@nats.io> [@ColinSullivan1](https://github.com/ColinSullivan1)
+  - Waldemar Quevedo <wally@nats.io> [@wallyqs](https://github.com/wallyqs)
+  - Derek Collison <derek@nats.io> [@derekcollison](https://github.com/derekcollison)
