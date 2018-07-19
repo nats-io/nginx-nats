@@ -4,8 +4,10 @@ USE_OPENSSL=YES
 
 if test -n "$ngx_module_link"; then
     ngx_module_type=CORE
+    
     ngx_module_name="ngx_nats_module \
                      ngx_nats_core_module"
+                     
     ngx_module_srcs="$ngx_addon_dir/ngx_nats.c \
                      $ngx_addon_dir/ngx_nats_comm.c \
                      $ngx_addon_dir/ngx_nats_protocol.c \
