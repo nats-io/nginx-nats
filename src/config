@@ -1,12 +1,35 @@
-CORE_INCS="$CORE_INCS $ngx_addon_dir"
 ngx_addon_name=ngx_nats_module
+CORE_INCS="$CORE_INCS $ngx_addon_dir"
 USE_OPENSSL=YES
-HTTP_MODULES="$HTTP_MODULES ngx_nats_module ngx_nats_core_module"
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats.c"
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_comm.c"
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_protocol.c"
-NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_json.c"
-NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats.h"
-NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_comm.h"
-NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_protocol.h"
-NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_json.h"
+
+if test -n "$ngx_module_link"; then
+    ngx_module_type=CORE
+    
+    ngx_module_name="ngx_nats_module \
+                     ngx_nats_core_module"
+                     
+    ngx_module_srcs="$ngx_addon_dir/ngx_nats.c \
+                     $ngx_addon_dir/ngx_nats_comm.c \
+                     $ngx_addon_dir/ngx_nats_protocol.c \
+                     $ngx_addon_dir/ngx_nats_json.c"
+
+    ngx_module_deps="$ngx_addon_dir/ngx_nats.h \
+                     $ngx_addon_dir/ngx_nats_comm.h \
+                     $ngx_addon_dir/ngx_nats_protocol.h \
+                     $ngx_addon_dir/ngx_nats_json.h"
+
+    ngx_module_order="ngx_nats_module \
+                      ngx_nats_core_module"                 
+
+    . auto/module
+else
+    HTTP_MODULES="$HTTP_MODULES ngx_nats_module ngx_nats_core_module"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats.c"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_comm.c"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_protocol.c"
+    NGX_ADDON_SRCS="$NGX_ADDON_SRCS $ngx_addon_dir/ngx_nats_json.c"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats.h"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_comm.h"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_protocol.h"
+    NGX_ADDON_DEPS="$NGX_ADDON_DEPS $ngx_addon_dir/ngx_nats_json.h"
+fi
