@@ -18,6 +18,8 @@
  *              Copyright (C) Nginx, Inc.
  */
 
+#include <nginx.h>
+
 #include "ngx_nats.h"
 #include "ngx_nats_comm.h"
 
@@ -62,6 +64,12 @@
     /* We'll go without knowing our local IP */
 #endif
 
+#if nginx_version >= 1009011
+    #define NATS_DYNAMIC_MODULE_SUPPORT (1)
+    #define NATS_NGX_MODULES(cf)   ((cf)->cycle->modules)
+#else
+    #define NATS_NGX_MODULES(cf)   ngx_modules
+#endif
 
 /*---------------------------------------------------------------------------
  * Forward declarations of functions for main (root) module.
@@ -209,6 +217,26 @@ ngx_module_t  ngx_nats_core_module = {
  *
  *=========================================================================*/
 
+static ngx_uint_t ngx_nats_get_modules_count(ngx_conf_t *cf)
+{
+#if defined(NATS_DYNAMIC_MODULE_SUPPORT)
+    return ngx_count_modules(cf->cycle, NGX_NATS_MODULE);
+#else
+    ngx_uint_t i;
+    ngx_uint_t count = 0;
+
+    for (i = 0; ngx_modules[i]; i++) {
+        if (ngx_modules[i]->type != NGX_NATS_MODULE) {
+            continue;
+        }
+
+        ngx_modules[i]->ctx_index = count++;
+    }
+
+    return count;
+#endif
+}
+
 static char *
 ngx_nats_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 {
@@ -225,14 +253,9 @@ ngx_nats_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
      * Count the number of the nats modules and set up their indices
      */
 
-    ngx_nats_max_module = 0;
-    for (i = 0; ngx_modules[i]; i++) {
-        if (ngx_modules[i]->type != NGX_NATS_MODULE) {
-            continue;
-        }
-
-        ngx_modules[i]->ctx_index = ngx_nats_max_module++;
-    }
+    ngx_nats_max_module = ngx_nats_get_modules_count(cf);
+    if (ngx_nats_max_module == 0)
+        return NGX_CONF_ERROR;
 
     /*
      * Setup array of configurations for NATS modules.
@@ -262,16 +285,16 @@ ngx_nats_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
      * inside of the nats{...} block.
      */
 
-    for (i = 0; ngx_modules[i]; i++) {
-        if (ngx_modules[i]->type != NGX_NATS_MODULE) {
+    for (i = 0; NATS_NGX_MODULES(cf)[i]; i++) {
+        if (NATS_NGX_MODULES(cf)[i]->type != NGX_NATS_MODULE) {
             continue;
         }
 
-        m = ngx_modules[i]->ctx;
+        m = NATS_NGX_MODULES(cf)[i]->ctx;
 
         if (m->create_conf) {
-            (*ctx)[ngx_modules[i]->ctx_index] = m->create_conf(cf->cycle);
-            if ((*ctx)[ngx_modules[i]->ctx_index] == NULL) {
+            (*ctx)[NATS_NGX_MODULES(cf)[i]->ctx_index] = m->create_conf(cf->cycle);
+            if ((*ctx)[NATS_NGX_MODULES(cf)[i]->ctx_index] == NULL) {
                 return NGX_CONF_ERROR;
             }
         }
@@ -299,15 +322,15 @@ ngx_nats_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
         return NGX_CONF_ERROR;
     }
 
-    for (i = 0; ngx_modules[i]; i++) {
-        if (ngx_modules[i]->type != NGX_NATS_MODULE) {
+    for (i = 0; NATS_NGX_MODULES(cf)[i]; i++) {
+        if (NATS_NGX_MODULES(cf)[i]->type != NGX_NATS_MODULE) {
             continue;
         }
 
-        m = ngx_modules[i]->ctx;
+        m = NATS_NGX_MODULES(cf)[i]->ctx;
 
         if (m->init_conf) {
-            rv = m->init_conf(cf, (*ctx)[ngx_modules[i]->ctx_index]);
+            rv = m->init_conf(cf, (*ctx)[NATS_NGX_MODULES(cf)[i]->ctx_index]);
             if (rv != NGX_CONF_OK) {
                 return rv;
             }
